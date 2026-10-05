@@ -46,7 +46,7 @@ with st.sidebar:
     st.write("Temporalidad: **1 minuto**")
     st.write("Horizonte: **5 minutos**")
     news_file=st.file_uploader("Calendario de noticias CSV (opcional)",type="csv")
-    st.caption("El gráfico permanece fijo en el activo seleccionado. Actualiza cuando quieras una nueva lectura.")
+    st.caption("El mercado se actualiza en vivo. La alerta del modelo solo cambia una vez cada 5 minutos.")
     if st.button("🔄 Actualizar mercado",use_container_width=True):
         get_market_data.clear()
     st.divider()
@@ -68,55 +68,83 @@ if train_button:
         except Exception as e:
             st.error(f"No se pudo entrenar: {e}")
 
-try:
-    df=get_market_data(symbol,max(500,bars))
-except Exception as e:
-    st.error(f"No se pudieron cargar datos de Deriv: {e}")
-    st.stop()
+@st.fragment(run_every="2s")
+def live_panel():
+    try:
+        get_market_data.clear()
+        df=get_market_data(symbol,max(500,bars))
+    except Exception as e:
+        st.error(f"No se pudieron cargar datos de Deriv: {e}")
+        return
 
-latest,prev=df.iloc[-1],df.iloc[-2]
-change=(latest.close/prev.close-1)*100
-c1,c2,c3,c4=st.columns(4)
-c1.metric("Activo",market); c2.metric("Precio",f"{latest.close:.5f}",f"{change:+.3f}%")
-c3.metric("Última vela",latest.timestamp.strftime("%H:%M UTC")); c4.metric("Activo enfocado",market)
+    latest,prev=df.iloc[-1],df.iloc[-2]
+    change=(latest.close/prev.close-1)*100
+    c1,c2,c3,c4=st.columns(4)
+    c1.metric("Activo",market)
+    c2.metric("Precio EN VIVO",f"{latest.close:.5f}",f"{change:+.3f}%")
+    c3.metric("Última vela",latest.timestamp.strftime("%H:%M UTC"))
+    c4.metric("Estado","🟢 EN VIVO")
 
-view=df.tail(bars)
-fig=go.Figure(data=[go.Candlestick(x=view.timestamp,open=view.open,high=view.high,low=view.low,close=view.close,name=market)])
-fig.update_layout(height=570,margin=dict(l=10,r=10,t=35,b=10),xaxis_rangeslider_visible=False,title=f"{market} — velas de 1 minuto",yaxis_title="Precio")
-st.plotly_chart(fig,use_container_width=True)
+    view=df.tail(bars)
+    fig=go.Figure(data=[go.Candlestick(x=view.timestamp,open=view.open,high=view.high,low=view.low,close=view.close,name=market)])
+    fig.update_layout(height=570,margin=dict(l=10,r=10,t=35,b=10),xaxis_rangeslider_visible=False,title=f"{market} — velas de 1 minuto",yaxis_title="Precio",uirevision=market)
+    st.plotly_chart(fig,use_container_width=True,key=f"live-chart-{market}")
 
-features=make_features(df,5,False)
-usable=features.dropna(subset=FEATURES)
-rsi_value=float(rsi(df.close,14).iloc[-1])
-ema9=float(df.close.ewm(span=9,adjust=False).mean().iloc[-1]); ema21=float(df.close.ewm(span=21,adjust=False).mean().iloc[-1])
-trend="ALCISTA" if ema9>ema21 else "BAJISTA"
-news_path=None
-if news_file is not None:
-    news_df=pd.read_csv(news_file); news_path="/tmp/news_events.csv"; news_df.to_csv(news_path,index=False)
-blocked,news_reason=news_block(latest.timestamp,news_path,(pair[:3],pair[3:6]))
+    features=make_features(df,5,False)
+    usable=features.dropna(subset=FEATURES)
+    rsi_value=float(rsi(df.close,14).iloc[-1])
+    ema9=float(df.close.ewm(span=9,adjust=False).mean().iloc[-1])
+    ema21=float(df.close.ewm(span=21,adjust=False).mean().iloc[-1])
+    trend="ALCISTA" if ema9>ema21 else "BAJISTA"
 
-st.subheader("Análisis")
-a,b,c,d=st.columns(4)
-a.metric("RSI 14",f"{rsi_value:.1f}"); b.metric("Tendencia EMA 9/21",trend)
-c.metric("Noticias","BLOQUEADA" if blocked else "OK"); d.metric("Datos disponibles",f"{len(df)} velas")
+    news_path=None
+    if news_file is not None:
+        news_df=pd.read_csv(news_file)
+        news_path="/tmp/news_events.csv"
+        news_df.to_csv(news_path,index=False)
+    blocked,news_reason=news_block(latest.timestamp,news_path,(pair[:3],pair[3:6]))
 
-payload=None
-if st.session_state.get("model_market")==market:
-    payload=st.session_state.get("model_payload")
-elif Path("models/model.joblib").exists():
-    payload=joblib.load("models/model.joblib")
+    st.subheader("Análisis en vivo")
+    a,b,c,d=st.columns(4)
+    a.metric("RSI 14",f"{rsi_value:.1f}")
+    b.metric("Tendencia EMA 9/21",trend)
+    c.metric("Noticias","BLOQUEADA" if blocked else "OK")
+    d.metric("Datos disponibles",f"{len(df)} velas")
 
-st.subheader("Señal del modelo — próximos 5 minutos")
-if payload is not None and not usable.empty:
-    p=float(payload["model"].predict_proba(usable[payload["features"]].iloc[[-1]])[0,1])
-    th=float(payload["threshold"])
-    decision="NO OPERAR" if blocked else ("SUBE" if p>=th else ("BAJA" if p<=1-th else "NO OPERAR"))
-    confidence=max(p,1-p)
-    x,y,z=st.columns(3)
-    x.metric("Decisión",decision); y.metric("Confianza del modelo",f"{confidence:.1%}"); z.metric("P(SUBE) / P(BAJA)",f"{p:.1%} / {1-p:.1%}")
-    st.progress(int(confidence*100))
-else:
-    st.warning("Pulsa «Entrenar modelo» en la barra lateral para crear un modelo con datos históricos de este activo.")
+    payload=st.session_state.get("model_payload") if st.session_state.get("model_market")==market else None
+    if payload is None and Path("models/model.joblib").exists():
+        payload=joblib.load("models/model.joblib")
+
+    now=latest.timestamp
+    alert_bucket=now.floor("5min")
+    next_alert=alert_bucket+pd.Timedelta(minutes=5)
+    remaining=max(0,int((next_alert-now).total_seconds()))
+
+    st.subheader("Alerta de 5 minutos")
+    if payload is not None and not usable.empty:
+        alert_key=f"alert_{market}"
+        saved=st.session_state.get(alert_key)
+        if saved is None or saved.get("bucket") != alert_bucket:
+            p=float(payload["model"].predict_proba(usable[payload["features"]].iloc[[-1]])[0,1])
+            th=float(payload["threshold"])
+            decision="NO OPERAR" if blocked else ("SUBE" if p>=th else ("BAJA" if p<=1-th else "NO OPERAR"))
+            st.session_state[alert_key]={"bucket":alert_bucket,"decision":decision,"p":p,"confidence":max(p,1-p)}
+        saved=st.session_state[alert_key]
+        x,y,z,w=st.columns(4)
+        x.metric("Alerta",saved["decision"])
+        y.metric("Confianza",f"{saved['confidence']:.1%}")
+        z.metric("P(SUBE) / P(BAJA)",f"{saved['p']:.1%} / {1-saved['p']:.1%}")
+        w.metric("Próxima alerta",f"{remaining//60:02d}:{remaining%60:02d}")
+        st.caption(f"Señal fija para {saved['bucket'].strftime('%H:%M')}–{(saved['bucket']+pd.Timedelta(minutes=5)).strftime('%H:%M')} UTC.")
+    else:
+        st.warning("Pulsa «Entrenar modelo» para activar alertas cada 5 minutos.")
+
+    if blocked:
+        st.error(f"Filtro de noticias: {news_reason}")
+    else:
+        st.info(f"Filtro de noticias: {news_reason}")
+
+live_panel()
 
 m=st.session_state.get("model_metrics")
 if m and st.session_state.get("model_market")==market:
@@ -127,11 +155,6 @@ if m and st.session_state.get("model_market")==market:
     q3.metric("Señales de prueba",m["signals"])
     q4.metric("Resultado teórico",f"{m['pnl']:.2f} u")
     st.caption(f"Entrenamiento/prueba separados en orden temporal 70/30. {m['rows']} observaciones útiles; {m['test']} en prueba. Resultado teórico usa payout 80% y no garantiza rendimiento futuro.")
-
-if blocked:
-    st.error(f"Filtro de noticias: {news_reason}")
-else:
-    st.info(f"Filtro de noticias: {news_reason}")
 
 with st.expander("Aviso y metodología"):
     st.write("La señal es una estimación estadística, no una certeza. El panel no compra contratos ni envía órdenes. Un resultado positivo en la prueba histórica no garantiza beneficios futuros; valida también en demo y con muestras más largas.")
