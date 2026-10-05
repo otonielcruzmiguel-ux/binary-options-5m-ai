@@ -5,7 +5,6 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from streamlit_autorefresh import st_autorefresh
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.metrics import accuracy_score
 
@@ -15,7 +14,6 @@ from src.binary5m import FEATURES, make_features, news_block, rsi
 st.set_page_config(page_title="Binary 5M AI | Deriv", page_icon="📈", layout="wide")
 st.title("Binary 5M AI — Deriv")
 st.caption("Dashboard de investigación. Datos públicos de Deriv. No ejecuta operaciones.")
-st_autorefresh(interval=1000, limit=None, key="market-live-refresh")
 
 MARKETS={"EUR/USD":("frxEURUSD","EURUSD"),"GBP/USD":("frxGBPUSD","GBPUSD"),"USD/JPY":("frxUSDJPY","USDJPY"),"AUD/USD":("frxAUDUSD","AUDUSD")}
 
@@ -43,12 +41,13 @@ def fit_model(raw,payout=.80):
 
 with st.sidebar:
     st.header("Configuración")
-    market=st.selectbox("Activo",list(MARKETS))
+    market=st.selectbox("Activo",list(MARKETS),index=0,help="El panel se enfoca en un solo activo a la vez.")
     bars=st.slider("Velas visibles",50,300,120,10)
     st.write("Temporalidad: **1 minuto**")
     st.write("Horizonte: **5 minutos**")
     news_file=st.file_uploader("Calendario de noticias CSV (opcional)",type="csv")
-    if st.button("🔄 Actualizar",use_container_width=True):
+    st.caption("El gráfico permanece fijo en el activo seleccionado. Actualiza cuando quieras una nueva lectura.")
+    if st.button("🔄 Actualizar mercado",use_container_width=True):
         get_market_data.clear()
     st.divider()
     st.subheader("Entrenamiento")
@@ -79,7 +78,7 @@ latest,prev=df.iloc[-1],df.iloc[-2]
 change=(latest.close/prev.close-1)*100
 c1,c2,c3,c4=st.columns(4)
 c1.metric("Activo",market); c2.metric("Precio",f"{latest.close:.5f}",f"{change:+.3f}%")
-c3.metric("Última vela",latest.timestamp.strftime("%H:%M:%S UTC")); c4.metric("Estado","🟢 EN VIVO")
+c3.metric("Última vela",latest.timestamp.strftime("%H:%M UTC")); c4.metric("Activo enfocado",market)
 
 view=df.tail(bars)
 fig=go.Figure(data=[go.Candlestick(x=view.timestamp,open=view.open,high=view.high,low=view.low,close=view.close,name=market)])
@@ -129,6 +128,6 @@ if m and st.session_state.get("model_market")==market:
     q4.metric("Resultado teórico",f"{m['pnl']:.2f} u")
     st.caption(f"Entrenamiento/prueba separados en orden temporal 70/30. {m['rows']} observaciones útiles; {m['test']} en prueba. Resultado teórico usa payout 80% y no garantiza rendimiento futuro.")
 
-st.error(f"Filtro de noticias: {news_reason}") if blocked else st.info(f"Filtro de noticias: {news_reason}")
+if blocked:\n    st.error(f"Filtro de noticias: {news_reason}")\nelse:\n    st.info(f"Filtro de noticias: {news_reason}")
 with st.expander("Aviso y metodología"):
     st.write("La señal es una estimación estadística, no una certeza. El panel no compra contratos ni envía órdenes. Un resultado positivo en la prueba histórica no garantiza beneficios futuros; valida también en demo y con muestras más largas.")
