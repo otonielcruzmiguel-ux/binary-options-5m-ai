@@ -50,23 +50,25 @@ with st.sidebar:
     if st.button("🔄 Actualizar mercado",use_container_width=True):
         get_market_data.clear()
     st.divider()
-    st.subheader("Entrenamiento")
+    st.subheader("Entrenamiento automático")
     train_count=st.select_slider("Velas para entrenar",options=[1000,2000,3000,5000],value=5000)
-    train_button=st.button("🧠 Entrenar modelo",use_container_width=True,type="primary")
+    st.caption("El modelo se entrena automáticamente al abrir o al cambiar de activo.")
 
 symbol,pair=MARKETS[market]
 
-if train_button:
-    with st.spinner(f"Descargando {train_count} velas y entrenando {market}..."):
+auto_key=f"trained_{market}_{train_count}"
+if not st.session_state.get(auto_key):
+    with st.spinner(f"Entrenando automáticamente {market}..."):
         try:
             hist=asyncio.run(candles(symbol,count=train_count,granularity=60))
             payload,metrics=fit_model(hist)
             st.session_state["model_payload"]=payload
             st.session_state["model_market"]=market
             st.session_state["model_metrics"]=metrics
-            st.success("Modelo entrenado y validado cronológicamente.")
+            st.session_state[auto_key]=True
+            st.success("Modelo listo. Alertas automáticas activadas.")
         except Exception as e:
-            st.error(f"No se pudo entrenar: {e}")
+            st.error(f"No se pudo entrenar automáticamente: {e}")
 
 @st.fragment(run_every="2s")
 def live_panel():
@@ -137,7 +139,7 @@ def live_panel():
         w.metric("Próxima alerta",f"{remaining//60:02d}:{remaining%60:02d}")
         st.caption(f"Señal fija para {saved['bucket'].strftime('%H:%M')}–{(saved['bucket']+pd.Timedelta(minutes=5)).strftime('%H:%M')} UTC.")
     else:
-        st.warning("Pulsa «Entrenar modelo» para activar alertas cada 5 minutos.")
+        st.warning("El modelo automático todavía se está preparando. La alerta aparecerá en cuanto esté listo.")
 
     if blocked:
         st.error(f"Filtro de noticias: {news_reason}")
