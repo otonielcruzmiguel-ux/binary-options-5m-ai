@@ -13,7 +13,7 @@ from src.binary5m import FEATURES, make_features, news_block, rsi
 
 st.set_page_config(page_title="Binary 5M AI | Deriv", page_icon="📈", layout="wide")
 st.title("Binary 5M AI — Deriv")
-st.caption("Dashboard de investigación. Datos públicos de Deriv. No ejecuta operaciones.")
+st.caption("Dashboard de investigación. Datos públicos de Deriv. No ejecuta operaciones.")\nst_autorefresh(interval=1000, limit=None, key="market-live-refresh")
 
 MARKETS={"EUR/USD":("frxEURUSD","EURUSD"),"GBP/USD":("frxGBPUSD","GBPUSD"),"USD/JPY":("frxUSDJPY","USDJPY"),"AUD/USD":("frxAUDUSD","AUDUSD")}
 
@@ -77,7 +77,7 @@ latest,prev=df.iloc[-1],df.iloc[-2]
 change=(latest.close/prev.close-1)*100
 c1,c2,c3,c4=st.columns(4)
 c1.metric("Activo",market); c2.metric("Precio",f"{latest.close:.5f}",f"{change:+.3f}%")
-c3.metric("Última vela",latest.timestamp.strftime("%H:%M UTC")); c4.metric("Horizonte","5 min")
+c3.metric("Última vela",latest.timestamp.strftime("%H:%M:%S UTC")); c4.metric("Estado","🟢 EN VIVO")
 
 view=df.tail(bars)
 fig=go.Figure(data=[go.Candlestick(x=view.timestamp,open=view.open,high=view.high,low=view.low,close=view.close,name=market)])
