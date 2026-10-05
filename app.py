@@ -128,6 +128,10 @@ if m and st.session_state.get("model_market")==market:
     q4.metric("Resultado teórico",f"{m['pnl']:.2f} u")
     st.caption(f"Entrenamiento/prueba separados en orden temporal 70/30. {m['rows']} observaciones útiles; {m['test']} en prueba. Resultado teórico usa payout 80% y no garantiza rendimiento futuro.")
 
-if blocked:\n    st.error(f"Filtro de noticias: {news_reason}")\nelse:\n    st.info(f"Filtro de noticias: {news_reason}")
+if blocked:
+    st.error(f"Filtro de noticias: {news_reason}")
+else:
+    st.info(f"Filtro de noticias: {news_reason}")
+
 with st.expander("Aviso y metodología"):
     st.write("La señal es una estimación estadística, no una certeza. El panel no compra contratos ni envía órdenes. Un resultado positivo en la prueba histórica no garantiza beneficios futuros; valida también en demo y con muestras más largas.")
