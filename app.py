@@ -117,7 +117,7 @@ def live_panel():
     if payload is None and Path("models/model.joblib").exists():
         payload=joblib.load("models/model.joblib")
 
-    now=latest.timestamp
+    now=pd.Timestamp.now(tz="UTC")
     alert_bucket=now.floor("5min")
     next_alert=alert_bucket+pd.Timedelta(minutes=5)
     remaining=max(0,int((next_alert-now).total_seconds()))
