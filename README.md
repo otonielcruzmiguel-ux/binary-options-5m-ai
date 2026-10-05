@@ -87,3 +87,15 @@ python -m src.deriv_signal --symbol frxEURUSD --pair EURUSD --news data/news_eve
 ```
 
 El conector usa únicamente el endpoint público de mercado. No contiene código para comprar contratos, enviar órdenes, leer saldo ni acceder a una cuenta real.
+
+## Dashboard web
+
+El archivo `app.py` incluye un dashboard Streamlit conectado a datos públicos de Deriv. Muestra gráfico de velas de 1 minuto, precio, RSI, tendencia EMA, estado del filtro de noticias y, si existe `models/model.joblib`, la señal del modelo a 5 minutos.
+
+Ejecutar localmente:
+
+```bash
+streamlit run app.py
+```
+
+Para publicarlo, crea una app en Streamlit Community Cloud, selecciona este repositorio y usa `app.py` como archivo principal. El dashboard no requiere credenciales de Deriv para consultar los datos públicos.
