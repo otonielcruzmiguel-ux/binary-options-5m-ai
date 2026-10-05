@@ -64,3 +64,26 @@ streamlit run app.py
 No juzgues el modelo por una sola sesión. La prueba importante es rendimiento fuera de muestra. Para payout de 80%, el break-even idealizado es 55.56% de aciertos: 1/(1+0.80). El programa añade margen al umbral de entrada, pero eso no implica que la probabilidad del modelo esté perfectamente calibrada.
 
 Antes de cualquier uso real conviene añadir walk-forward validation, calibración probabilística, costos/latencia, datos de varios meses/años, métricas por horario y activo, y una fuente en vivo fiable tanto para mercado como para calendario económico.
+## Deriv — datos oficiales
+
+El proyecto puede descargar velas de 1 minuto desde el WebSocket público oficial de Deriv. Esta conexión es solo de lectura y no necesita token para datos públicos.
+
+Descargar velas EUR/USD:
+
+```bash
+python -m src.deriv_market --symbol frxEURUSD --count 5000 --output data/deriv_eurusd.csv
+```
+
+Entrenar con esas velas:
+
+```bash
+python -m src.binary5m train data/deriv_eurusd.csv --payout 0.80
+```
+
+Generar una señal usando datos recientes directamente de Deriv:
+
+```bash
+python -m src.deriv_signal --symbol frxEURUSD --pair EURUSD --news data/news_events.csv
+```
+
+El conector usa únicamente el endpoint público de mercado. No contiene código para comprar contratos, enviar órdenes, leer saldo ni acceder a una cuenta real.
