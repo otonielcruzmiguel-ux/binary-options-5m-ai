@@ -14,7 +14,8 @@ from src.binary5m import FEATURES, make_features, news_block, rsi
 
 st.set_page_config(page_title="Binary 5M AI | Deriv", page_icon="📈", layout="wide")
 st.title("Binary 5M AI — Deriv")
-st.caption("Dashboard de investigación. Datos públicos de Deriv. No ejecuta operaciones.")\nst_autorefresh(interval=1000, limit=None, key="market-live-refresh")
+st.caption("Dashboard de investigación. Datos públicos de Deriv. No ejecuta operaciones.")
+st_autorefresh(interval=1000, limit=None, key="market-live-refresh")
 
 MARKETS={"EUR/USD":("frxEURUSD","EURUSD"),"GBP/USD":("frxGBPUSD","GBPUSD"),"USD/JPY":("frxUSDJPY","USDJPY"),"AUD/USD":("frxAUDUSD","AUDUSD")}
 
