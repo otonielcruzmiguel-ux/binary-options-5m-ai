@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.metrics import accuracy_score
 
@@ -17,7 +18,7 @@ st.caption("Dashboard de investigación. Datos públicos de Deriv. No ejecuta op
 
 MARKETS={"EUR/USD":("frxEURUSD","EURUSD"),"GBP/USD":("frxGBPUSD","GBPUSD"),"USD/JPY":("frxUSDJPY","USDJPY"),"AUD/USD":("frxAUDUSD","AUDUSD")}
 
-@st.cache_data(ttl=20,show_spinner=False)
+@st.cache_data(ttl=1,show_spinner=False)
 def get_market_data(symbol,count):
     return asyncio.run(candles(symbol,count=count,granularity=60))
 
