@@ -155,13 +155,14 @@ def live_panel():
     if payload is not None and not usable.empty:
         alert_key=f"alert_{market}"
         saved=st.session_state.get(alert_key)
-        if saved is None or saved.get("bucket") != alert_bucket:
+        signal_bucket=next_alert if remaining <= 10 else alert_bucket
+        if saved is None or saved.get("bucket") != signal_bucket:
             p=float(payload["model"].predict_proba(usable[payload["features"]].iloc[[-1]])[0,1])
             th=float(payload["threshold"])
             decision="NO OPERAR" if blocked else ("SUBE" if p>=th else ("BAJA" if p<=1-th else "NO OPERAR"))
-            st.session_state[alert_key]={"bucket":alert_bucket,"decision":decision,"p":p,"confidence":max(p,1-p)}
-            if decision in ("SUBE","BAJA") and not any(r["bucket"]==alert_bucket for r in history):
-                history.append({"bucket":alert_bucket,"expires":alert_bucket+pd.Timedelta(minutes=5),"decision":decision,"entry_price":float(latest.close),"exit_price":None,"confidence":max(p,1-p),"result":"PENDIENTE"})
+            st.session_state[alert_key]={"bucket":signal_bucket,"decision":decision,"p":p,"confidence":max(p,1-p)}
+            if decision in ("SUBE","BAJA") and not any(r["bucket"]==signal_bucket for r in history):
+                history.append({"bucket":signal_bucket,"expires":signal_bucket+pd.Timedelta(minutes=5),"decision":decision,"entry_price":float(latest.close),"exit_price":None,"confidence":max(p,1-p),"result":"PENDIENTE"})
                 if len(history)>200:
                     del history[:-200]
         saved=st.session_state[alert_key]
@@ -170,7 +171,10 @@ def live_panel():
         y.metric("Confianza",f"{saved['confidence']:.1%}")
         z.metric("P(SUBE) / P(BAJA)",f"{saved['p']:.1%} / {1-saved['p']:.1%}")
         w.metric("Próxima alerta",f"{remaining//60:02d}:{remaining%60:02d}")
-        st.caption(f"Señal fija para {saved['bucket'].strftime('%H:%M')}–{(saved['bucket']+pd.Timedelta(minutes=5)).strftime('%H:%M')} UTC.")
+        if saved["bucket"] > alert_bucket:
+            st.success(f"⚡ ALERTA ANTICIPADA: señal para {saved['bucket'].strftime('%H:%M')}–{(saved['bucket']+pd.Timedelta(minutes=5)).strftime('%H:%M')} UTC. Faltan {remaining} s para iniciar.")
+        else:
+            st.caption(f"Señal fija para {saved['bucket'].strftime('%H:%M')}–{(saved['bucket']+pd.Timedelta(minutes=5)).strftime('%H:%M')} UTC.")
     else:
         st.warning("El modelo automático todavía se está preparando. La alerta aparecerá en cuanto esté listo.")
 
