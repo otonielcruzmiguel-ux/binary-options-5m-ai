@@ -56,6 +56,47 @@ with st.sidebar:
 
 symbol,pair=MARKETS[market]
 
+@st.cache_data(ttl=60,show_spinner=False)
+def rank_markets(count):
+    rows=[]
+    for name,(sym,_) in MARKETS.items():
+        try:
+            raw=asyncio.run(candles(sym,count=count,granularity=60))
+            model_data,metrics=fit_model(raw)
+            feat=make_features(raw,5,False).dropna(subset=FEATURES)
+            if feat.empty:
+                continue
+            p=float(model_data["model"].predict_proba(feat[FEATURES].iloc[[-1]])[0,1])
+            th=float(model_data["threshold"])
+            decision="SUBE" if p>=th else ("BAJA" if p<=1-th else "NO OPERAR")
+            confidence=max(p,1-p)
+            conf=float(feat.iloc[-1].get("confluence",0.0))
+            hist_acc=metrics["signal_accuracy"]
+            hist_score=0.5 if np.isnan(hist_acc) else float(hist_acc)
+            score=(confidence*.50)+(hist_score*.35)+(min(abs(conf),1.0)*.15)
+            rows.append({"Par":name,"Señal":decision,"Confianza":confidence,"Confluencia":conf,"Accuracy prueba":hist_acc,"Score":score})
+        except Exception:
+            continue
+    return pd.DataFrame(rows).sort_values("Score",ascending=False) if rows else pd.DataFrame()
+
+with st.expander("🏆 Mejor par para operar ahora",expanded=True):
+    ranking=rank_markets(min(train_count,3000))
+    operables=ranking[ranking["Señal"]!="NO OPERAR"] if not ranking.empty else ranking
+    if operables.empty:
+        st.warning("NO OPERAR: ninguno de los pares supera ahora el umbral del modelo.")
+    else:
+        best=operables.iloc[0]
+        b1,b2,b3=st.columns(3)
+        b1.metric("Mejor par",best["Par"])
+        b2.metric("Señal",best["Señal"])
+        b3.metric("Confianza",f"{best['Confianza']:.1%}")
+        show=ranking.copy()
+        show["Confianza"]=show["Confianza"].map(lambda v:f"{v:.1%}")
+        show["Accuracy prueba"]=show["Accuracy prueba"].map(lambda v:"—" if pd.isna(v) else f"{v:.1%}")
+        show["Confluencia"]=show["Confluencia"].map(lambda v:f"{v:+.2f}")
+        st.dataframe(show[["Par","Señal","Confianza","Confluencia","Accuracy prueba"]],width="stretch",hide_index=True)
+        st.caption("Ranking orientativo para el próximo horizonte de 5 minutos. Compara confianza, validación histórica y confluencia; no garantiza el resultado.")
+
 auto_key=f"trained_{market}_{train_count}"
 if not st.session_state.get(auto_key):
     with st.spinner(f"Entrenando automáticamente {market}..."):
