@@ -9,7 +9,12 @@ from sklearn.metrics import accuracy_score, classification_report
 
 FEATURES = [
     "ret1","ret3","ret5","ema_gap","rsi14","atr14","bb_pos",
-    "range_pct","body_pct","volatility10","hour_sin","hour_cos"
+    "range_pct","body_pct","volatility10","hour_sin","hour_cos",
+    "support_dist","resistance_dist","breakout_up","breakout_down",
+    "retest_up","retest_down","support_bounce","resistance_bounce",
+    "ema_trend","ema_cross","rsi_support","rsi_resistance",
+    "rsi_bull_div","rsi_bear_div","bb_rsi_buy","bb_rsi_sell",
+    "trend_pullback","confluence"
 ]
 
 def load_candles(path: str) -> pd.DataFrame:
@@ -50,6 +55,38 @@ def make_features(df: pd.DataFrame, horizon: int = 5, with_target: bool = True) 
     x["range_pct"] = (x.high-x.low) / c
     x["body_pct"] = (x.close-x.open) / x.open
     x["volatility10"] = x["ret1"].rolling(10).std()
+
+    # Estrategias técnicas convertidas en variables numéricas para ML.
+    support = x["low"].shift(1).rolling(20).min()
+    resistance = x["high"].shift(1).rolling(20).max()
+    atr_abs = tr.rolling(14).mean().replace(0, np.nan)
+    x["support_dist"] = (c-support)/atr_abs
+    x["resistance_dist"] = (resistance-c)/atr_abs
+    x["breakout_up"] = (c > resistance).astype(float)
+    x["breakout_down"] = (c < support).astype(float)
+    tol = atr_abs * .25
+    x["retest_up"] = ((c > resistance.shift(1)) & (x["low"] <= resistance.shift(1)+tol)).astype(float)
+    x["retest_down"] = ((c < support.shift(1)) & (x["high"] >= support.shift(1)-tol)).astype(float)
+    x["support_bounce"] = ((x["low"] <= support+tol) & (c > x["open"])).astype(float)
+    x["resistance_bounce"] = ((x["high"] >= resistance-tol) & (c < x["open"])).astype(float)
+    x["ema_trend"] = np.sign(ema9-ema21)
+    prev_gap=(ema9-ema21).shift(1)
+    x["ema_cross"] = np.where((ema9>ema21)&(prev_gap<=0),1,np.where((ema9<ema21)&(prev_gap>=0),-1,0))
+    rsi_raw=rsi(c,14)
+    x["rsi_support"] = ((rsi_raw<35) & (x["support_dist"]<.5)).astype(float)
+    x["rsi_resistance"] = ((rsi_raw>65) & (x["resistance_dist"]<.5)).astype(float)
+    x["rsi_bull_div"] = ((c<c.shift(5)) & (rsi_raw>rsi_raw.shift(5))).astype(float)
+    x["rsi_bear_div"] = ((c>c.shift(5)) & (rsi_raw<rsi_raw.shift(5))).astype(float)
+    lower=ma20-2*sd20
+    upper=ma20+2*sd20
+    x["bb_rsi_buy"] = ((c<=lower) & (rsi_raw<35)).astype(float)
+    x["bb_rsi_sell"] = ((c>=upper) & (rsi_raw>65)).astype(float)
+    near_ema=(c-ema21).abs()/atr_abs
+    x["trend_pullback"] = np.where((ema9>ema21)&(near_ema<.5),1,np.where((ema9<ema21)&(near_ema<.5),-1,0))
+    bullish=x["breakout_up"]+x["retest_up"]+x["support_bounce"]+(x["ema_trend"]>0).astype(float)+x["rsi_support"]+x["rsi_bull_div"]+x["bb_rsi_buy"]+(x["trend_pullback"]>0).astype(float)
+    bearish=x["breakout_down"]+x["retest_down"]+x["resistance_bounce"]+(x["ema_trend"]<0).astype(float)+x["rsi_resistance"]+x["rsi_bear_div"]+x["bb_rsi_sell"]+(x["trend_pullback"]<0).astype(float)
+    x["confluence"]=(bullish-bearish)/8.0
+
     hour = x.timestamp.dt.hour + x.timestamp.dt.minute / 60
     x["hour_sin"] = np.sin(2*np.pi*hour/24)
     x["hour_cos"] = np.cos(2*np.pi*hour/24)
