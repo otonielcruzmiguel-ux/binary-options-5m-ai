@@ -47,7 +47,7 @@ with st.sidebar:
     st.write("Horizonte: **5 minutos**")
     news_file=st.file_uploader("Calendario de noticias CSV (opcional)",type="csv")
     st.caption("El mercado se actualiza en vivo. La alerta del modelo solo cambia una vez cada 5 minutos.")
-    if st.button("🔄 Actualizar mercado",use_container_width=True):
+    if st.button("🔄 Actualizar mercado",width="stretch"):
         get_market_data.clear()
     st.divider()
     st.subheader("Entrenamiento automático")
@@ -65,6 +65,7 @@ if not st.session_state.get(auto_key):
             st.session_state["model_payload"]=payload
             st.session_state["model_market"]=market
             st.session_state["model_metrics"]=metrics
+            st.session_state["trained_at"]=pd.Timestamp.now(tz="UTC")
             st.session_state[auto_key]=True
             st.success("Modelo listo. Alertas automáticas activadas.")
         except Exception as e:
@@ -122,6 +123,34 @@ def live_panel():
     next_alert=alert_bucket+pd.Timedelta(minutes=5)
     remaining=max(0,int((next_alert-now).total_seconds()))
 
+    # Evalúa alertas anteriores exactamente con datos posteriores, sin look-ahead.
+    history_key=f"live_history_{market}"
+    history=st.session_state.setdefault(history_key,[])
+    for rec in history:
+        if rec["result"]=="PENDIENTE" and now >= rec["expires"]:
+            after=df[df["timestamp"] >= rec["expires"]]
+            if not after.empty:
+                exit_price=float(after.iloc[0]["close"])
+                rec["exit_price"]=exit_price
+                if exit_price == rec["entry_price"]:
+                    rec["result"]="EMPATE"
+                else:
+                    won=(rec["decision"]=="SUBE" and exit_price>rec["entry_price"]) or (rec["decision"]=="BAJA" and exit_price<rec["entry_price"])
+                    rec["result"]="GANADA" if won else "PERDIDA"
+
+    # Reentrena cada 30 minutos con las velas más recientes.
+    trained_at=st.session_state.get("trained_at")
+    if trained_at is not None and (now-trained_at).total_seconds() >= 1800:
+        try:
+            fresh=asyncio.run(candles(symbol,count=train_count,granularity=60))
+            new_payload,new_metrics=fit_model(fresh)
+            st.session_state["model_payload"]=new_payload
+            st.session_state["model_metrics"]=new_metrics
+            st.session_state["trained_at"]=now
+            payload=new_payload
+        except Exception:
+            pass
+
     st.subheader("Alerta de 5 minutos")
     if payload is not None and not usable.empty:
         alert_key=f"alert_{market}"
@@ -131,6 +160,10 @@ def live_panel():
             th=float(payload["threshold"])
             decision="NO OPERAR" if blocked else ("SUBE" if p>=th else ("BAJA" if p<=1-th else "NO OPERAR"))
             st.session_state[alert_key]={"bucket":alert_bucket,"decision":decision,"p":p,"confidence":max(p,1-p)}
+            if decision in ("SUBE","BAJA") and not any(r["bucket"]==alert_bucket for r in history):
+                history.append({"bucket":alert_bucket,"expires":alert_bucket+pd.Timedelta(minutes=5),"decision":decision,"entry_price":float(latest.close),"exit_price":None,"confidence":max(p,1-p),"result":"PENDIENTE"})
+                if len(history)>200:
+                    del history[:-200]
         saved=st.session_state[alert_key]
         x,y,z,w=st.columns(4)
         x.metric("Alerta",saved["decision"])
@@ -140,6 +173,23 @@ def live_panel():
         st.caption(f"Señal fija para {saved['bucket'].strftime('%H:%M')}–{(saved['bucket']+pd.Timedelta(minutes=5)).strftime('%H:%M')} UTC.")
     else:
         st.warning("El modelo automático todavía se está preparando. La alerta aparecerá en cuanto esté listo.")
+
+    st.subheader("Aprendizaje en vivo")
+    completed=[r for r in history if r["result"] in ("GANADA","PERDIDA")]
+    wins=sum(r["result"]=="GANADA" for r in completed)
+    losses=sum(r["result"]=="PERDIDA" for r in completed)
+    rate=(wins/len(completed)*100) if completed else None
+    l1,l2,l3,l4=st.columns(4)
+    l1.metric("Alertas evaluadas",len(completed))
+    l2.metric("Ganadas",wins)
+    l3.metric("Perdidas",losses)
+    l4.metric("Acierto en vivo","—" if rate is None else f"{rate:.1f}%")
+    st.caption("El modelo registra cada señal, comprueba el resultado 5 minutos después y se reentrena cada 30 minutos con las velas más recientes. Más reentrenamiento no garantiza mayor precisión.")
+    if history:
+        table=pd.DataFrame(history[-20:]).copy()
+        table["hora"]=table["bucket"].apply(lambda x:x.strftime("%H:%M"))
+        table["confianza"]=table["confidence"].apply(lambda x:f"{x:.1%}")
+        st.dataframe(table[["hora","decision","confianza","entry_price","exit_price","result"]].iloc[::-1],width="stretch",hide_index=True)
 
     if blocked:
         st.error(f"Filtro de noticias: {news_reason}")
