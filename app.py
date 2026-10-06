@@ -156,6 +156,12 @@ def live_panel():
     d.metric("Datos disponibles",f"{len(df)} velas")
 
     payload=st.session_state.get("model_payload") if st.session_state.get("model_market")==market else None
+    persistent_model=Path(f"/data/model_{symbol}.joblib")
+    if persistent_model.exists():
+        try:
+            payload=joblib.load(persistent_model)
+        except Exception:
+            pass
     if payload is None and Path("models/model.joblib").exists():
         payload=joblib.load("models/model.joblib")
 
