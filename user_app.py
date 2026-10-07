@@ -34,11 +34,11 @@ with st.sidebar:
 
 symbol=MARKETS[market]
 
-@st.cache_data(ttl=5,show_spinner=False)
+@st.cache_data(ttl=3,show_spinner=False)
 def market_data(sym,count):
     return asyncio.run(candles(sym,count=count,granularity=60))
 
-@st.fragment(run_every="1s")
+@st.fragment(run_every="0.5s")
 def user_panel():
     try:
         raw=market_data(symbol,max(bars,250))
@@ -52,7 +52,7 @@ def user_panel():
         try:
             base=os.environ.get("SIGNAL_API_URL","http://binary-options-5m-ai.railway.internal:8090")
             url=base+"/signal/"+urllib.parse.quote(market,safe="")
-            with urllib.request.urlopen(url,timeout=3) as resp:
+            with urllib.request.urlopen(url,timeout=.7) as resp:
                 sig=json.loads(resp.read().decode())
             decision=sig.get("decision","ESPERANDO")
             confidence=sig.get("confidence")
@@ -71,7 +71,7 @@ def user_panel():
         fig=go.Figure(data=[go.Candlestick(x=chart["timestamp"],open=chart["open"],high=chart["high"],low=chart["low"],close=chart["close"])])
         fig.update_layout(height=480,margin=dict(l=10,r=10,t=30,b=10),xaxis_rangeslider_visible=False,title=f"{market} · 1 minuto")
         st.plotly_chart(fig,width="stretch",config={"displayModeBar":False})
-        st.caption("La señal es una estimación del modelo y no garantiza el resultado. Esta vista no ejecuta operaciones. El reloj se actualiza cada segundo; las velas se consultan cada pocos segundos para reducir latencia y carga.")
+        st.caption("La señal es una estimación del modelo y no garantiza el resultado. Esta vista no ejecuta operaciones. La interfaz refresca cada 0.5 s; mercado y gráfico usan caché para evitar bloquear la pantalla.")
     except Exception as e:
         st.warning(f"Mercado temporalmente no disponible: {e}")
 
