@@ -334,7 +334,7 @@ if page=="📝 Evolución":
         st.info("Esperando que el worker cree la bitácora persistente.")
 
 
-@st.fragment(run_every="10s")
+@st.fragment(run_every="3s")
 def live_panel():
     try:
         df=get_market_data(symbol,max(500,bars))
