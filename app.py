@@ -152,6 +152,28 @@ def persistent_learning_panel():
     p4.metric("Accuracy","—" if np.isnan(accuracy) else f"{accuracy:.1%}")
     p5.metric("Pendientes",pending)
 
+    recent=evaluated.head(30).copy()
+    recent_decided=recent[recent["result"].isin(["GANADA","PERDIDA"])]
+    rw=int((recent_decided["result"]=="GANADA").sum()); rn=len(recent_decided)
+    recent_acc=(rw/rn) if rn else float("nan")
+    if decided<30:
+        status="⚪ APRENDIENDO"; status_msg="Todavía hay poca muestra para juzgar el sistema."
+    elif accuracy>=.62:
+        status="🟢 FUERTE"; status_msg="El histórico evaluado está por encima del nivel de referencia."
+    elif accuracy>=.56:
+        status="🟡 VIGILAR"; status_msg="Está sobre el punto de equilibrio aproximado, pero necesita más evidencia."
+    else:
+        status="🔴 DÉBIL"; status_msg="El rendimiento evaluado está por debajo del nivel de referencia."
+    st.markdown(f"### Estado general: {status}")
+    st.caption(status_msg)
+    v1,v2,v3=st.columns(3)
+    v1.metric("Acierto total","—" if np.isnan(accuracy) else f"{accuracy:.1%}")
+    v2.metric("Últimas 30","—" if np.isnan(recent_acc) else f"{recent_acc:.1%}",None if np.isnan(recent_acc) or np.isnan(accuracy) else f"{(recent_acc-accuracy)*100:+.1f} pp vs total")
+    v3.metric("Muestra útil",decided)
+    if decided:
+        chart=pd.DataFrame({"Resultado":["Ganadas","Perdidas"],"Cantidad":[wins,losses]}).set_index("Resultado")
+        st.bar_chart(chart,width="stretch")
+
     rows=[]
     for name,g in evaluated.groupby("market"):
         w=int((g["result"]=="GANADA").sum())
@@ -161,8 +183,13 @@ def persistent_learning_panel():
         rows.append({"Par":name,"Evaluadas":len(g),"Ganadas":w,"Perdidas":l,"Empates":t,"Accuracy":(w/n if n else np.nan)})
     if rows:
         by_pair=pd.DataFrame(rows).sort_values(["Accuracy","Evaluadas"],ascending=[False,False])
+        st.markdown("### Rendimiento por par")
+        visual=by_pair.dropna(subset=["Accuracy"]).set_index("Par")[["Accuracy"]]
+        if not visual.empty:
+            st.bar_chart(visual,width="stretch")
+        by_pair["Indicador"]=by_pair.apply(lambda r:"⚪ Poca muestra" if (r["Ganadas"]+r["Perdidas"])<30 else ("🟢 Fuerte" if r["Accuracy"]>=.62 else ("🟡 Vigilar" if r["Accuracy"]>=.56 else "🔴 Débil")),axis=1)
         by_pair["Accuracy"]=by_pair["Accuracy"].map(lambda v:"—" if pd.isna(v) else f"{v:.1%}")
-        st.dataframe(by_pair,width="stretch",hide_index=True)
+        st.dataframe(by_pair[["Par","Indicador","Evaluadas","Ganadas","Perdidas","Accuracy"]],width="stretch",hide_index=True)
 
     last=hist.head(20).copy()
     last["Confianza"]=pd.to_numeric(last["confidence"],errors="coerce").map(lambda v:"—" if pd.isna(v) else f"{v:.1%}")
