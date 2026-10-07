@@ -188,8 +188,22 @@ def persistent_learning_panel():
     v2.metric("Últimas 30","—" if np.isnan(recent_acc) else f"{recent_acc:.1%}",None if np.isnan(recent_acc) or np.isnan(accuracy) else f"{(recent_acc-accuracy)*100:+.1f} pp vs total")
     v3.metric("Muestra útil",decided)
     if decided:
-        chart=pd.DataFrame({"Resultado":["Ganadas","Perdidas"],"Cantidad":[wins,losses]}).set_index("Resultado")
-        st.bar_chart(chart,width="stretch")
+        left,right=st.columns([1,1.7])
+        with left:
+            donut=go.Figure(go.Pie(labels=["Ganadas","Perdidas"],values=[wins,losses],hole=.68,textinfo="label+percent",hovertemplate="%{label}: %{value}<extra></extra>"))
+            donut.update_layout(title="Balance de resultados",height=330,margin=dict(l=20,r=20,t=55,b=20),showlegend=False,annotations=[dict(text=f"{accuracy:.1%}",x=.5,y=.5,font_size=25,showarrow=False)])
+            st.plotly_chart(donut,width="stretch",key="results-donut")
+        with right:
+            trend=evaluated[evaluated["result"].isin(["GANADA","PERDIDA"])].copy()
+            trend["bucket"]=pd.to_datetime(trend["bucket"],utc=True,errors="coerce")
+            trend=trend.sort_values("bucket").tail(80)
+            trend["win"]=(trend["result"]=="GANADA").astype(int)
+            trend["Acierto móvil"]=trend["win"].rolling(15,min_periods=5).mean()*100
+            tf=go.Figure()
+            tf.add_trace(go.Scatter(x=trend["bucket"],y=trend["Acierto móvil"],mode="lines+markers",name="Últimas 15",line=dict(width=3)))
+            tf.add_hline(y=55.6,line_dash="dash",annotation_text="Referencia 55.6%")
+            tf.update_layout(title="Tendencia reciente",height=330,margin=dict(l=20,r=20,t=55,b=20),yaxis=dict(title="Acierto %",range=[0,100]),xaxis_title=None,hovermode="x unified")
+            st.plotly_chart(tf,width="stretch",key="results-trend")
 
     rows=[]
     for name,g in evaluated.groupby("market"):
@@ -201,9 +215,12 @@ def persistent_learning_panel():
     if rows:
         by_pair=pd.DataFrame(rows).sort_values(["Accuracy","Evaluadas"],ascending=[False,False])
         st.markdown("### Rendimiento por par")
-        visual=by_pair.dropna(subset=["Accuracy"]).set_index("Par")[["Accuracy"]]
+        visual=by_pair.dropna(subset=["Accuracy"]).sort_values("Accuracy",ascending=True)
         if not visual.empty:
-            st.bar_chart(visual,width="stretch")
+            pf=go.Figure(go.Bar(x=visual["Accuracy"]*100,y=visual["Par"],orientation="h",text=visual["Accuracy"].map(lambda v:f"{v:.1%}"),textposition="outside",hovertemplate="%{y}: %{x:.1f}%<extra></extra>"))
+            pf.add_vline(x=55.6,line_dash="dash",annotation_text="Referencia 55.6%")
+            pf.update_layout(title="Comparación de pares",height=max(360,55*len(visual)),margin=dict(l=20,r=70,t=55,b=35),xaxis=dict(title="Acierto %",range=[0,100]),yaxis_title=None,showlegend=False)
+            st.plotly_chart(pf,width="stretch",key="pair-performance")
         by_pair["Indicador"]=by_pair.apply(lambda r:"⚪ Poca muestra" if (r["Ganadas"]+r["Perdidas"])<30 else ("🟢 Fuerte" if r["Accuracy"]>=.62 else ("🟡 Vigilar" if r["Accuracy"]>=.56 else "🔴 Débil")),axis=1)
         by_pair["Accuracy"]=by_pair["Accuracy"].map(lambda v:"—" if pd.isna(v) else f"{v:.1%}")
         st.dataframe(by_pair[["Par","Indicador","Evaluadas","Ganadas","Perdidas","Accuracy"]],width="stretch",hide_index=True)
