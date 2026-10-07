@@ -19,6 +19,9 @@ def connect():
     cols={r[1] for r in c.execute("PRAGMA table_info(signals)")}
     if "context" not in cols: c.execute("ALTER TABLE signals ADD COLUMN context TEXT")
     c.execute("CREATE TABLE IF NOT EXISTS summaries(period TEXT PRIMARY KEY,created TEXT,evaluated INTEGER,wins INTEGER,losses INTEGER,ties INTEGER,accuracy REAL)")
+    c.execute("""CREATE TABLE IF NOT EXISTS evolution(
+      period TEXT PRIMARY KEY, created TEXT, evaluated INTEGER, wins INTEGER, losses INTEGER,
+      accuracy REAL, change_type TEXT, detail TEXT)""")
     c.commit(); return c
 
 def train(raw):
@@ -46,6 +49,22 @@ def adaptive_threshold(con,market,now):
     # Si el rendimiento reciente cae, exige más confianza; si es sólido, relaja muy poco.
     adj=.03 if acc<.56 else (.015 if acc<.60 else (-.005 if acc>=.66 and n>=60 else 0))
     return min(.68,max(THRESHOLD,THRESHOLD+adj)),n,acc
+
+def hourly_evolution(con,now):
+    period=now.floor("1h").isoformat()
+    if con.execute("SELECT 1 FROM evolution WHERE period=?",(period,)).fetchone(): return
+    start=now.floor("1h")-pd.Timedelta(hours=1)
+    rows=con.execute("SELECT result FROM signals WHERE bucket>=? AND bucket<? AND result IN ('GANADA','PERDIDA')",(start.isoformat(),now.floor("1h").isoformat())).fetchall()
+    n=len(rows); w=sum(r[0]=="GANADA" for r in rows); l=sum(r[0]=="PERDIDA" for r in rows)
+    acc=(w/n) if n else None
+    # Esta bitácora documenta la evaluación. No afirma cambios de algoritmo que no hayan ocurrido.
+    detail=("Sin muestra suficiente; se mantiene la estrategia actual." if n<10 else
+            ("Rendimiento horario bajo; los filtros adaptativos pueden exigir mayor confianza." if acc is not None and acc<.56 else
+             "Rendimiento horario estable; sin cambio automático de estrategia."))
+    change_type="EVALUACIÓN HORARIA"
+    con.execute("INSERT OR IGNORE INTO evolution VALUES(?,?,?,?,?,?,?,?)",(period,now.isoformat(),n,w,l,acc,change_type,detail))
+    con.commit()
+    print(f"EVOLUCION_1H evaluadas={n} ganadas={w} perdidas={l} accuracy={'NA' if acc is None else f'{acc:.3f}'} detalle={detail}",flush=True)
 
 def context_of(row):
     out={}
@@ -108,7 +127,7 @@ async def cycle():
                         if result=="PERDIDA": print(f"FALLO market={m} bucket={b} decision={d} contexto={ctx}",flush=True)
             con.commit()
         except Exception as e: print(f"{market}: {e}",flush=True)
-    summarize(con,now); con.close()
+    hourly_evolution(con,now); summarize(con,now); con.close()
 
 if __name__=="__main__":
     print("Worker de aprendizaje 24/7 iniciado",flush=True)
