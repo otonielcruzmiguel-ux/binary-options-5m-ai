@@ -191,7 +191,7 @@ def persistent_learning_panel():
     if decided:
         left,right=st.columns([1,1.7])
         with left:
-            donut=go.Figure(go.Pie(labels=["Ganadas","Perdidas"],values=[wins,losses],hole=.68,textinfo="label+percent",marker=dict(colors=["#A8E6CF","#FFAAA5"],line=dict(color="#20242c",width=2)),hovertemplate="%{label}: %{value}<extra></extra>"))
+            donut=go.Figure(go.Pie(labels=["Ganadas","Perdidas"],values=[wins,losses],hole=.68,textinfo="label+percent",marker=dict(colors=["#00E676","#FF5252"],line=dict(color="#20242c",width=2)),hovertemplate="%{label}: %{value}<extra></extra>"))
             donut.update_layout(title="Balance de resultados",height=330,margin=dict(l=20,r=20,t=55,b=20),showlegend=False,annotations=[dict(text=f"{accuracy:.1%}",x=.5,y=.5,font_size=25,showarrow=False)])
             st.plotly_chart(donut,width="stretch",key="results-donut")
         with right:
@@ -202,10 +202,10 @@ def persistent_learning_panel():
             trend["Acierto móvil"]=trend["win"].rolling(15,min_periods=5).mean()*100
             tf=go.Figure()
             trend["Acierto 30"]=trend["win"].rolling(30,min_periods=8).mean()*100
-            tf.add_trace(go.Scatter(x=trend["bucket"],y=trend["Acierto móvil"],mode="lines+markers",name="Media 15",line=dict(width=3,color="#B8B5FF"),marker=dict(color="#B8B5FF")))
-            tf.add_trace(go.Scatter(x=trend["bucket"],y=trend["Acierto 30"],mode="lines",name="Media 30",line=dict(width=3,color="#FFD3B6")))
-            tf.add_hline(y=accuracy*100,line_dash="dot",line_color="#A8D8EA",annotation_text="Promedio total")
-            tf.add_hline(y=55.6,line_dash="dash",line_color="#FFAAA5",annotation_text="Referencia 55.6%")
+            tf.add_trace(go.Scatter(x=trend["bucket"],y=trend["Acierto móvil"],mode="lines+markers",name="Media 15",line=dict(width=3,color="#7C4DFF"),marker=dict(color="#7C4DFF")))
+            tf.add_trace(go.Scatter(x=trend["bucket"],y=trend["Acierto 30"],mode="lines",name="Media 30",line=dict(width=3,color="#FF9100")))
+            tf.add_hline(y=accuracy*100,line_dash="dot",line_color="#00B8D4",annotation_text="Promedio total")
+            tf.add_hline(y=55.6,line_dash="dash",line_color="#FF1744",annotation_text="Referencia 55.6%")
             tf.update_layout(title="Tendencia reciente",height=330,margin=dict(l=20,r=20,t=55,b=20),yaxis=dict(title="Acierto %",range=[0,100]),xaxis_title=None,hovermode="x unified")
             st.plotly_chart(tf,width="stretch",key="results-trend")
 
@@ -221,8 +221,8 @@ def persistent_learning_panel():
         st.markdown("### Rendimiento por par")
         visual=by_pair.dropna(subset=["Accuracy"]).sort_values("Accuracy",ascending=True)
         if not visual.empty:
-            pf=go.Figure(go.Bar(x=visual["Accuracy"]*100,y=visual["Par"],orientation="h",text=visual["Accuracy"].map(lambda v:f"{v:.1%}"),textposition="outside",marker=dict(color=["#FFB7B2","#FFDAC1","#E2F0CB","#B5EAD7","#C7CEEA","#D5AAFF","#A8D8EA","#F6C1C7","#B8E0D2","#F3D1F4"][:len(visual)]),hovertemplate="%{y}: %{x:.1f}%<extra></extra>"))
-            pf.add_vline(x=55.6,line_dash="dash",line_color="#FFAAA5",annotation_text="Referencia 55.6%")
+            pf=go.Figure(go.Bar(x=visual["Accuracy"]*100,y=visual["Par"],orientation="h",text=visual["Accuracy"].map(lambda v:f"{v:.1%}"),textposition="outside",marker=dict(color=["#FF1744","#FF9100","#FFD600","#00E676","#00B8D4","#2979FF","#7C4DFF","#F500A5","#00C853","#651FFF"][:len(visual)]),hovertemplate="%{y}: %{x:.1f}%<extra></extra>"))
+            pf.add_vline(x=55.6,line_dash="dash",line_color="#FF1744",annotation_text="Referencia 55.6%")
             pf.update_layout(title="Comparación de pares",height=max(360,55*len(visual)),margin=dict(l=20,r=70,t=55,b=35),xaxis=dict(title="Acierto %",range=[0,100]),yaxis_title=None,showlegend=False)
             st.plotly_chart(pf,width="stretch",key="pair-performance")
         by_pair["Indicador"]=by_pair.apply(lambda r:"⚪ Poca muestra" if (r["Ganadas"]+r["Perdidas"])<30 else ("🟢 Fuerte" if r["Accuracy"]>=.62 else ("🟡 Vigilar" if r["Accuracy"]>=.56 else "🔴 Débil")),axis=1)
@@ -235,8 +235,8 @@ def persistent_learning_panel():
         decided_curve["bucket"]=pd.to_datetime(decided_curve["bucket"],utc=True,errors="coerce")
         decided_curve=decided_curve.sort_values("bucket")
         decided_curve["Balance acumulado"]=np.where(decided_curve["result"]=="GANADA",.80,-1.0).cumsum()
-        cf=go.Figure(go.Scatter(x=decided_curve["bucket"],y=decided_curve["Balance acumulado"],mode="lines",fill="tozeroy",name="Balance",line=dict(width=3,color="#B5EAD7"),fillcolor="rgba(181,234,215,0.18)"))
-        cf.add_hline(y=0,line_dash="dash",line_color="#FFAAA5")
+        cf=go.Figure(go.Scatter(x=decided_curve["bucket"],y=decided_curve["Balance acumulado"],mode="lines",fill="tozeroy",name="Balance",line=dict(width=3,color="#00E676"),fillcolor="rgba(0,230,118,0.16)"))
+        cf.add_hline(y=0,line_dash="dash",line_color="#FF1744")
         cf.update_layout(title="Evolución acumulada (unidades teóricas)",height=340,margin=dict(l=20,r=20,t=55,b=25),xaxis_title=None,yaxis_title="Unidades",hovermode="x unified")
         st.plotly_chart(cf,width="stretch",key="cumulative-results")
 
