@@ -40,6 +40,9 @@ def fit_model(raw,payout=.80):
     return {"model":model,"features":FEATURES,"threshold":threshold,"payout":payout}, {"rows":len(data),"test":len(te),"signals":int(take.sum()),"accuracy":all_acc,"signal_accuracy":trade_acc,"pnl":pnl}
 
 with st.sidebar:
+    st.header("Navegación")
+    page=st.radio("Sección",["📈 Mercado","📊 Resultados","🧠 Sistema 24/7"],index=0)
+    st.divider()
     st.header("Configuración")
     market=st.selectbox("Activo",list(MARKETS),index=0,help="El panel se enfoca en un solo activo a la vez.")
     bars=st.slider("Velas visibles",50,300,120,10)
@@ -80,39 +83,41 @@ def rank_markets(count):
             continue
     return pd.DataFrame(rows).sort_values("Score",ascending=False) if rows else pd.DataFrame()
 
-with st.expander("🏆 Mejor par para operar ahora",expanded=True):
-    ranking=rank_markets(min(train_count,3000))
-    operables=ranking[ranking["Señal"]!="NO OPERAR"] if not ranking.empty else ranking
-    if operables.empty:
-        st.warning("NO OPERAR: ninguno de los pares supera ahora el umbral del modelo.")
-    else:
-        best=operables.iloc[0]
-        b1,b2,b3=st.columns(3)
-        b1.metric("Mejor par",best["Par"])
-        b2.metric("Señal",best["Señal"])
-        b3.metric("Confianza",f"{best['Confianza']:.1%}")
-        show=ranking.copy()
-        show["Confianza"]=show["Confianza"].map(lambda v:f"{v:.1%}")
-        show["Accuracy prueba"]=show["Accuracy prueba"].map(lambda v:"—" if pd.isna(v) else f"{v:.1%}")
-        show["Confluencia"]=show["Confluencia"].map(lambda v:f"{v:+.2f}")
-        st.dataframe(show[["Par","Señal","Confianza","Confluencia","Accuracy prueba"]],width="stretch",hide_index=True)
-        st.caption("Ranking orientativo para el próximo horizonte de 5 minutos. Compara confianza, validación histórica y confluencia; no garantiza el resultado.")
-
-auto_key=f"trained_{market}_{train_count}"
-if not st.session_state.get(auto_key):
-    with st.spinner(f"Entrenando automáticamente {market}..."):
-        try:
-            hist=load_history(symbol,train_count)
-            if len(hist)<500: raise ValueError(f"Histórico local insuficiente: {len(hist)} velas")
-            payload,metrics=fit_model(hist)
-            st.session_state["model_payload"]=payload
-            st.session_state["model_market"]=market
-            st.session_state["model_metrics"]=metrics
-            st.session_state["trained_at"]=pd.Timestamp.now(tz="UTC")
-            st.session_state[auto_key]=True
-            st.success("Modelo listo. Alertas automáticas activadas.")
-        except Exception as e:
-            st.error(f"No se pudo entrenar automáticamente: {e}")
+if page=="📈 Mercado":
+  with st.expander("🏆 Mejor par para operar ahora",expanded=True):
+      ranking=rank_markets(min(train_count,3000))
+      operables=ranking[ranking["Señal"]!="NO OPERAR"] if not ranking.empty else ranking
+      if operables.empty:
+          st.warning("NO OPERAR: ninguno de los pares supera ahora el umbral del modelo.")
+      else:
+          best=operables.iloc[0]
+          b1,b2,b3=st.columns(3)
+          b1.metric("Mejor par",best["Par"])
+          b2.metric("Señal",best["Señal"])
+          b3.metric("Confianza",f"{best['Confianza']:.1%}")
+          show=ranking.copy()
+          show["Confianza"]=show["Confianza"].map(lambda v:f"{v:.1%}")
+          show["Accuracy prueba"]=show["Accuracy prueba"].map(lambda v:"—" if pd.isna(v) else f"{v:.1%}")
+          show["Confluencia"]=show["Confluencia"].map(lambda v:f"{v:+.2f}")
+          st.dataframe(show[["Par","Señal","Confianza","Confluencia","Accuracy prueba"]],width="stretch",hide_index=True)
+          st.caption("Ranking orientativo para el próximo horizonte de 5 minutos. Compara confianza, validación histórica y confluencia; no garantiza el resultado.")
+  
+if page in ("📈 Mercado","🧠 Sistema 24/7"):
+    auto_key=f"trained_{market}_{train_count}"
+    if not st.session_state.get(auto_key):
+        with st.spinner(f"Entrenando automáticamente {market}..."):
+            try:
+                hist=load_history(symbol,train_count)
+                if len(hist)<500: raise ValueError(f"Histórico local insuficiente: {len(hist)} velas")
+                payload,metrics=fit_model(hist)
+                st.session_state["model_payload"]=payload
+                st.session_state["model_market"]=market
+                st.session_state["model_metrics"]=metrics
+                st.session_state["trained_at"]=pd.Timestamp.now(tz="UTC")
+                st.session_state[auto_key]=True
+                st.success("Modelo listo. Alertas automáticas activadas.")
+            except Exception as e:
+                st.error(f"No se pudo entrenar automáticamente: {e}")
 
 def persistent_learning_panel():
     db_path=Path("/data/learning.db")
@@ -216,7 +221,8 @@ def persistent_learning_panel():
                 except Exception:
                     pass
 
-persistent_learning_panel()
+if page=="📊 Resultados":
+    persistent_learning_panel()
 
 @st.fragment(run_every="2s")
 def live_panel():
@@ -354,17 +360,19 @@ def live_panel():
     else:
         st.info(f"Filtro de noticias: {news_reason}")
 
-live_panel()
+if page=="📈 Mercado":
+    live_panel()
 
-m=st.session_state.get("model_metrics")
-if m and st.session_state.get("model_market")==market:
-    st.subheader("Validación fuera de muestra")
-    q1,q2,q3,q4=st.columns(4)
-    q1.metric("Accuracy total",f"{m['accuracy']:.1%}")
-    q2.metric("Accuracy señales",("—" if np.isnan(m["signal_accuracy"]) else f"{m['signal_accuracy']:.1%}"))
-    q3.metric("Señales de prueba",m["signals"])
-    q4.metric("Resultado teórico",f"{m['pnl']:.2f} u")
-    st.caption(f"Entrenamiento/prueba separados en orden temporal 70/30. {m['rows']} observaciones útiles; {m['test']} en prueba. Resultado teórico usa payout 80% y no garantiza rendimiento futuro.")
+if page=="🧠 Sistema 24/7":
+    m=st.session_state.get("model_metrics")
+    if m and st.session_state.get("model_market")==market:
+        st.subheader("Validación fuera de muestra")
+        q1,q2,q3,q4=st.columns(4)
+        q1.metric("Accuracy total",f"{m['accuracy']:.1%}")
+        q2.metric("Accuracy señales",("—" if np.isnan(m["signal_accuracy"]) else f"{m['signal_accuracy']:.1%}"))
+        q3.metric("Señales de prueba",m["signals"])
+        q4.metric("Resultado teórico",f"{m['pnl']:.2f} u")
+        st.caption(f"Entrenamiento/prueba separados en orden temporal 70/30. {m['rows']} observaciones útiles; {m['test']} en prueba. Resultado teórico usa payout 80% y no garantiza rendimiento futuro.")
 
 with st.expander("Aviso y metodología"):
     st.write("La señal es una estimación estadística, no una certeza. El panel no compra contratos ni envía órdenes. Un resultado positivo en la prueba histórica no garantiza beneficios futuros; valida también en demo y con muestras más largas.")
