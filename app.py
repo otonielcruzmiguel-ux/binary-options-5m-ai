@@ -51,7 +51,7 @@ if st.session_state.get("recommended_market") in MARKETS:
 
 with st.sidebar:
     st.header("Navegación")
-    page=st.radio("Sección",["🎯 Ejecutivo","📊 Resultados","🧠 Sistema 24/7","📝 Evolución"],index=0)
+    page=st.radio("Sección",["⚡ Ejecutivo 1M","🎯 Ejecutivo 5M","📊 Resultados","🧠 Sistema 24/7","📝 Evolución"],index=1)
     st.divider()
     st.header("Configuración")
     market=st.selectbox("Activo",list(MARKETS),index=0,key="market_selector",help="Al abrir Mercado se selecciona automáticamente el mejor par operable; puedes cambiarlo manualmente.")
@@ -93,7 +93,7 @@ def rank_markets(count):
             continue
     return pd.DataFrame(rows).sort_values("Score",ascending=False) if rows else pd.DataFrame()
 
-if page=="🎯 Ejecutivo":
+if page=="🎯 Ejecutivo 5M":
   ranking=rank_markets(min(train_count,3000))
   operables=ranking[ranking["Señal"]!="NO OPERAR"] if not ranking.empty else ranking
   if not operables.empty:
@@ -125,7 +125,7 @@ if page=="🎯 Ejecutivo":
 market=st.session_state.get("market_selector",market)
 symbol,pair=MARKETS[market]
 
-if page in ("🎯 Ejecutivo","🧠 Sistema 24/7"):
+if page in ("🎯 Ejecutivo 5M","🧠 Sistema 24/7"):
     auto_key=f"trained_{market}_{train_count}"
     if not st.session_state.get(auto_key):
         with st.spinner(f"Entrenando automáticamente {market}..."):
@@ -347,6 +347,44 @@ if page=="📝 Evolución":
         st.info("Esperando que el worker cree la bitácora persistente.")
 
 
+
+def executive_1m():
+    st.markdown("## ⚡ Ejecutivo 1M")
+    st.caption("Estrategia experimental independiente · horizonte 1 minuto · modelo e historial separados de 5M")
+    df=get_market_data(symbol,max(500,bars))
+    if df.empty:
+        st.warning("Esperando histórico local."); return
+    latest=df.iloc[-1]; path=Path(f"/data/model_1m_{symbol}.joblib")
+    a,b,c1,d=st.columns(4)
+    a.metric("Par",market); b.metric("Precio",f"{latest.close:.5f}"); c1.metric("Horizonte","1 minuto"); d.metric("Motor","🟢 ACTIVO" if path.exists() else "🟡 APRENDIENDO")
+    view=df.tail(bars)
+    fig=go.Figure(data=[go.Candlestick(x=view.timestamp,open=view.open,high=view.high,low=view.low,close=view.close,name=market)])
+    fig.update_layout(height=470,margin=dict(l=10,r=10,t=35,b=10),xaxis_rangeslider_visible=False,title=f"{market} · estrategia 1M",uirevision="1m-"+market)
+    st.plotly_chart(fig,width="stretch",key=f"chart-1m-{market}",config={"displayModeBar":False})
+    if not path.exists():
+        st.info("El modelo 1M está creando su primera validación. No reutiliza la predicción 5M."); return
+    try:
+        payload=joblib.load(path); feat=make_features(df,1,False).dropna(subset=FEATURES)
+        p=float(payload["model"].predict_proba(feat[payload["features"]].iloc[[-1]])[0,1]); th=float(payload.get("threshold",.59))
+        decision="SUBE" if p>=th else ("BAJA" if p<=1-th else "NO OPERAR")
+        conf=max(p,1-p); now=pd.Timestamp.now(tz="UTC"); remain=max(0,60-now.second)
+        st.markdown(f'<div class="signal-card"><div class="muted">DECISIÓN 1M · {market}</div><div class="signal-big">{decision}</div><div class="muted">Investigación independiente de la estrategia 5M</div></div>',unsafe_allow_html=True)
+        q1,q2,q3,q4=st.columns(4); q1.metric("Confianza",f"{conf:.1%}"); q2.metric("P(SUBE)",f"{p:.1%}"); q3.metric("P(BAJA)",f"{1-p:.1%}"); q4.metric("Próximo minuto",f"00:{remain:02d}")
+        db=Path("/data/learning.db")
+        if db.exists():
+            import sqlite3
+            con=sqlite3.connect(f"file:{db}?mode=ro",uri=True,timeout=2)
+            h=pd.read_sql_query("SELECT result FROM signals_1m WHERE market=? ORDER BY bucket DESC LIMIT 100",con,params=(market,)); con.close()
+            done=h[h["result"].isin(["GANADA","PERDIDA"])]
+            if not done.empty:
+                acc=(done["result"]=="GANADA").mean()
+                st.caption(f"Forward 1M reciente · {len(done)} evaluadas · acierto {acc:.1%}. Se mantiene separado del historial 5M.")
+    except Exception as e:
+        st.warning(f"Motor 1M inicializándose: {e}")
+
+if page=="⚡ Ejecutivo 1M":
+    executive_1m()
+
 @st.fragment(run_every="3s")
 def live_panel():
     try:
@@ -451,7 +489,7 @@ def live_panel():
     else:
         st.warning("El modelo automático todavía se está preparando. La alerta aparecerá en cuanto esté listo.")
 
-    if page!="🎯 Ejecutivo":
+    if page not in ("🎯 Ejecutivo 5M","⚡ Ejecutivo 1M"):
         st.subheader("Aprendizaje en vivo")
         completed=[r for r in history if r["result"] in ("GANADA","PERDIDA")]
         wins=sum(r["result"]=="GANADA" for r in completed)
@@ -474,7 +512,7 @@ def live_panel():
     else:
         st.info(f"Filtro de noticias: {news_reason}")
 
-if page=="🎯 Ejecutivo":
+if page=="🎯 Ejecutivo 5M":
     live_panel()
 
 if page=="🧠 Sistema 24/7":
