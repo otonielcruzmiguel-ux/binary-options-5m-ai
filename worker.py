@@ -19,6 +19,7 @@ STRATEGY_FIELDS=["breakout_up","breakout_down","retest_up","retest_down","suppor
 def connect():
     c=sqlite3.connect(DB)
     c.execute("CREATE TABLE IF NOT EXISTS signals(market TEXT,bucket TEXT,expires TEXT,decision TEXT,entry REAL,exit REAL,confidence REAL,result TEXT,PRIMARY KEY(market,bucket))")
+    c.execute("CREATE TABLE IF NOT EXISTS signals_1m(market TEXT,bucket TEXT,expires TEXT,decision TEXT,entry REAL,exit REAL,confidence REAL,result TEXT,context TEXT,PRIMARY KEY(market,bucket))")
     cols={r[1] for r in c.execute("PRAGMA table_info(signals)")}
     if "context" not in cols: c.execute("ALTER TABLE signals ADD COLUMN context TEXT")
     c.execute("CREATE TABLE IF NOT EXISTS summaries(period TEXT PRIMARY KEY,created TEXT,evaluated INTEGER,wins INTEGER,losses INTEGER,ties INTEGER,accuracy REAL)")
@@ -62,6 +63,19 @@ def walk_forward_score(d):
             scores.append(float((pred[take]==y[take]).mean())); counts.append(int(take.sum()))
     if not scores: return None,0
     return float(np.average(scores,weights=counts)),sum(counts)
+
+def train_horizon(raw,horizon):
+    d=make_features(raw,horizon,True).dropna(subset=FEATURES+["target"])
+    if len(d)<500: return None
+    cut=int(len(d)*.70); tr=d.iloc[:cut]; te=d.iloc[cut:]
+    candidate=HistGradientBoostingClassifier(max_iter=250,learning_rate=.05,max_leaf_nodes=15,l2_regularization=1.0,random_state=42)
+    candidate.fit(tr[FEATURES],tr["target"].astype(int))
+    p=candidate.predict_proba(te[FEATURES])[:,1]; y=te["target"].astype(int).to_numpy()
+    take=(p>=THRESHOLD)|(p<=1-THRESHOLD); pred=(p>=.5).astype(int)
+    acc=float((pred[take]==y[take]).mean()) if take.any() else None
+    m=HistGradientBoostingClassifier(max_iter=250,learning_rate=.05,max_leaf_nodes=15,l2_regularization=1.0,random_state=42)
+    m.fit(d[FEATURES],d["target"].astype(int))
+    return {"model":m,"features":FEATURES,"threshold":THRESHOLD,"payout":PAYOUT,"horizon":horizon,"trained_at":pd.Timestamp.now(tz="UTC").isoformat(),"validation_accuracy":acc,"validation_signals":int(take.sum())}
 
 def train(raw):
     d=make_features(raw,5,True).dropna(subset=FEATURES+["target"])
@@ -188,6 +202,42 @@ async def cycle():
                         # Avanza el reloj de evaluación sin reemplazar el modelo vigente.
                         meta.write_text(json.dumps({"trained_at":candidate["trained_at"],"validation_accuracy":current.get("validation_accuracy") if current else None,"validation_signals":current.get("validation_signals") if current else None,"walk_forward_accuracy":current.get("walk_forward_accuracy") if current else None,"walk_forward_signals":current.get("walk_forward_signals") if current else None,"candidate_rejected":why}))
                         print(f"{market}: candidato rechazado · {why}",flush=True)
+            # Estrategia 1M independiente: objetivo, modelo e historial propios.
+            path1=DATA/f"model_1m_{symbol}.joblib"; meta1=DATA/f"model_1m_{symbol}.json"
+            retrain1=not path1.exists()
+            if meta1.exists():
+                try: retrain1=(now-pd.Timestamp(json.loads(meta1.read_text())["trained_at"])).total_seconds()>=1800
+                except Exception: retrain1=True
+            if retrain1:
+                candidate1=train_horizon(raw,1)
+                if candidate1:
+                    joblib.dump(candidate1,path1)
+                    meta1.write_text(json.dumps({"trained_at":candidate1["trained_at"],"validation_accuracy":candidate1.get("validation_accuracy"),"validation_signals":candidate1.get("validation_signals"),"horizon":1}))
+                    print(f"{market}: modelo 1M actualizado validacion={candidate1.get('validation_accuracy')}",flush=True)
+            if path1.exists():
+                payload1=joblib.load(path1)
+                feat1=make_features(raw,1,False).dropna(subset=FEATURES)
+                if not feat1.empty:
+                    row1=feat1.iloc[-1]; p1=float(payload1["model"].predict_proba(feat1[payload1["features"]].iloc[[-1]])[0,1]); th1=float(payload1.get("threshold",THRESHOLD))
+                    dec1="SUBE" if p1>=th1 else ("BAJA" if p1<=1-th1 else "NO OPERAR")
+                    if dec1!="NO OPERAR":
+                        votes1,opp1=directional_quality(row1,dec1)
+                        if votes1<2 or opp1>=2: dec1="NO OPERAR"
+                    base1,quote1=market.split("/")
+                    blocked1,_,_=news_block(now,(base1,quote1),before=15,after=30)
+                    if blocked1: dec1="NO OPERAR"
+                    bucket1=now.floor("1min")
+                    if dec1!="NO OPERAR":
+                        ctx1=json.loads(context_of(row1)); ctx1["strategy"]="1M"; ctx1=json.dumps(ctx1,separators=(",",":"))
+                        con.execute("INSERT OR IGNORE INTO signals_1m VALUES(?,?,?,?,?,?,?,?,?)",(market,bucket1.isoformat(),(bucket1+pd.Timedelta(minutes=1)).isoformat(),dec1,float(raw.iloc[-1].close),None,max(p1,1-p1),"PENDIENTE",ctx1))
+                    for m1,b1,e1,d1,entry1 in con.execute("SELECT market,bucket,expires,decision,entry FROM signals_1m WHERE market=? AND result='PENDIENTE'",(market,)).fetchall():
+                        exp1=pd.Timestamp(e1)
+                        if now>=exp1:
+                            after1=raw[raw["timestamp"]>=exp1]
+                            if not after1.empty:
+                                exit1=float(after1.iloc[0].close); won1=(d1=="SUBE" and exit1>entry1) or (d1=="BAJA" and exit1<entry1)
+                                res1="EMPATE" if exit1==entry1 else ("GANADA" if won1 else "PERDIDA")
+                                con.execute("UPDATE signals_1m SET exit=?,result=? WHERE market=? AND bucket=?",(exit1,res1,m1,b1))
             if not path.exists(): continue
             payload=joblib.load(path)
             feat=make_features(raw,5,False).dropna(subset=FEATURES)
