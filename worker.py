@@ -8,10 +8,14 @@ from src.binary5m import FEATURES, make_features
 MARKETS={"EUR/USD":"frxEURUSD","GBP/USD":"frxGBPUSD","USD/JPY":"frxUSDJPY","AUD/USD":"frxAUDUSD"}
 DATA=Path("/data"); DATA.mkdir(parents=True,exist_ok=True)
 DB=DATA/"learning.db"; THRESHOLD=max(1/(1+.80)+.03,.58)
+STRATEGY_FIELDS=["breakout_up","breakout_down","retest_up","retest_down","support_bounce","resistance_bounce","ema_trend","ema_cross","rsi_support","rsi_resistance","rsi_bull_div","rsi_bear_div","bb_rsi_buy","bb_rsi_sell","trend_pullback","confluence"]
 
 def connect():
     c=sqlite3.connect(DB)
     c.execute("CREATE TABLE IF NOT EXISTS signals(market TEXT,bucket TEXT,expires TEXT,decision TEXT,entry REAL,exit REAL,confidence REAL,result TEXT,PRIMARY KEY(market,bucket))")
+    cols={r[1] for r in c.execute("PRAGMA table_info(signals)")}
+    if "context" not in cols: c.execute("ALTER TABLE signals ADD COLUMN context TEXT")
+    c.execute("CREATE TABLE IF NOT EXISTS summaries(period TEXT PRIMARY KEY,created TEXT,evaluated INTEGER,wins INTEGER,losses INTEGER,ties INTEGER,accuracy REAL)")
     c.commit(); return c
 
 def train(raw):
@@ -20,6 +24,24 @@ def train(raw):
     m=HistGradientBoostingClassifier(max_iter=250,learning_rate=.05,max_leaf_nodes=15,l2_regularization=1.0,random_state=42)
     m.fit(d[FEATURES],d["target"].astype(int))
     return {"model":m,"features":FEATURES,"threshold":THRESHOLD,"payout":.80,"trained_at":pd.Timestamp.now(tz="UTC").isoformat()}
+
+def context_of(row):
+    out={}
+    for k in STRATEGY_FIELDS:
+        if k in row.index and pd.notna(row[k]): out[k]=round(float(row[k]),5)
+    return json.dumps(out,separators=(",",":"))
+
+def summarize(con,now):
+    period=now.floor("8h").isoformat()
+    if con.execute("SELECT 1 FROM summaries WHERE period=?",(period,)).fetchone(): return
+    start=now.floor("8h")-pd.Timedelta(hours=8)
+    rows=con.execute("SELECT result FROM signals WHERE bucket>=? AND bucket<?",(start.isoformat(),now.floor("8h").isoformat())).fetchall()
+    vals=[r[0] for r in rows if r[0] in ("GANADA","PERDIDA","EMPATE")]
+    w=vals.count("GANADA"); l=vals.count("PERDIDA"); t=vals.count("EMPATE"); n=w+l
+    acc=w/n if n else None
+    con.execute("INSERT OR IGNORE INTO summaries VALUES(?,?,?,?,?,?,?)",(period,now.isoformat(),len(vals),w,l,t,acc))
+    con.commit()
+    print(f"RESUMEN_8H evaluadas={len(vals)} ganadas={w} perdidas={l} empates={t} accuracy={'NA' if acc is None else f'{acc:.3f}'}",flush=True)
 
 async def cycle():
     con=connect(); now=pd.Timestamp.now(tz="UTC")
@@ -34,31 +56,30 @@ async def cycle():
             if retrain:
                 payload=train(raw)
                 if payload:
-                    tmp=DATA/f"model_{symbol}.tmp"
-                    joblib.dump(payload,tmp); tmp.replace(path)
+                    tmp=DATA/f"model_{symbol}.tmp"; joblib.dump(payload,tmp); tmp.replace(path)
                     meta.write_text(json.dumps({"trained_at":payload["trained_at"]}))
                     print(f"{market}: modelo reentrenado",flush=True)
             if not path.exists(): continue
             payload=joblib.load(path)
             feat=make_features(raw,5,False).dropna(subset=FEATURES)
             if feat.empty: continue
-            bucket=now.floor("5min")
+            latest=feat.iloc[-1]; bucket=now.floor("5min")
             p=float(payload["model"].predict_proba(feat[payload["features"]].iloc[[-1]])[0,1])
             decision="SUBE" if p>=THRESHOLD else ("BAJA" if p<=1-THRESHOLD else "NO OPERAR")
             if decision!="NO OPERAR":
-                con.execute("INSERT OR IGNORE INTO signals VALUES(?,?,?,?,?,?,?,?)",(market,bucket.isoformat(),(bucket+pd.Timedelta(minutes=5)).isoformat(),decision,float(raw.iloc[-1].close),None,max(p,1-p),"PENDIENTE"))
-            for m,b,e,d,entry in con.execute("SELECT market,bucket,expires,decision,entry FROM signals WHERE market=? AND result='PENDIENTE'",(market,)).fetchall():
+                con.execute("INSERT OR IGNORE INTO signals(market,bucket,expires,decision,entry,exit,confidence,result,context) VALUES(?,?,?,?,?,?,?,?,?)",(market,bucket.isoformat(),(bucket+pd.Timedelta(minutes=5)).isoformat(),decision,float(raw.iloc[-1].close),None,max(p,1-p),"PENDIENTE",context_of(latest)))
+            for m,b,e,d,entry,ctx in con.execute("SELECT market,bucket,expires,decision,entry,context FROM signals WHERE market=? AND result='PENDIENTE'",(market,)).fetchall():
                 exp=pd.Timestamp(e)
                 if now>=exp:
                     after=raw[raw["timestamp"]>=exp]
                     if not after.empty:
-                        exitp=float(after.iloc[0].close)
-                        won=(d=="SUBE" and exitp>entry) or (d=="BAJA" and exitp<entry)
+                        exitp=float(after.iloc[0].close); won=(d=="SUBE" and exitp>entry) or (d=="BAJA" and exitp<entry)
                         result="EMPATE" if exitp==entry else ("GANADA" if won else "PERDIDA")
                         con.execute("UPDATE signals SET exit=?,result=? WHERE market=? AND bucket=?",(exitp,result,m,b))
+                        if result=="PERDIDA": print(f"FALLO market={m} bucket={b} decision={d} contexto={ctx}",flush=True)
             con.commit()
         except Exception as e: print(f"{market}: {e}",flush=True)
-    con.close()
+    summarize(con,now); con.close()
 
 if __name__=="__main__":
     print("Worker de aprendizaje 24/7 iniciado",flush=True)
