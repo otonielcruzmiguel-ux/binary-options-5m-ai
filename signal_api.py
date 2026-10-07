@@ -9,13 +9,19 @@ MARKETS={"EUR/USD":"frxEURUSD","GBP/USD":"frxGBPUSD","USD/JPY":"frxUSDJPY","AUD/
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if not self.path.startswith("/signal/"):
+        is_candles=self.path.startswith("/candles/")
+        if not (self.path.startswith("/signal/") or is_candles):
             self.send_response(404); self.end_headers(); return
-        market=self.path.split("/signal/",1)[1].replace("%2F","/")
+        market=self.path.split("/candles/" if is_candles else "/signal/",1)[1].replace("%2F","/")
         symbol=MARKETS.get(market)
         if not symbol:
             self.send_response(404); self.end_headers(); return
         try:
+            if is_candles:
+                raw=load(symbol,300)
+                rows=[{"timestamp":pd.Timestamp(r.timestamp).isoformat(),"open":r.open,"high":r.high,"low":r.low,"close":r.close,"volume":r.volume} for r in raw.itertuples()]
+                body=json.dumps({"market":market,"candles":rows}).encode()
+                self.send_response(200); self.send_header("Content-Type","application/json"); self.send_header("Cache-Control","no-store"); self.end_headers(); self.wfile.write(body); return
             path=Path(f"/data/model_{symbol}.joblib")
             if not path.exists(): raise RuntimeError("modelo aún no disponible")
             payload=joblib.load(path)
