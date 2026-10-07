@@ -1,5 +1,4 @@
 import json
-import asyncio
 from pathlib import Path
 import joblib
 import numpy as np
@@ -9,18 +8,18 @@ import streamlit as st
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.metrics import accuracy_score
 
-from src.deriv_market import candles
+from src.history_store import load as load_history, count as history_count
 from src.binary5m import FEATURES, make_features, news_block, rsi
 
 st.set_page_config(page_title="Binary 5M AI | Deriv", page_icon="📈", layout="wide")
 st.title("Binary 5M AI — Deriv")
-st.caption("Dashboard de investigación. Datos públicos de Deriv. No ejecuta operaciones.")
+st.caption("Dashboard de investigación. Mercado almacenado localmente desde Deriv. No ejecuta operaciones.")
 
 MARKETS={"EUR/USD":("frxEURUSD","EURUSD"),"GBP/USD":("frxGBPUSD","GBPUSD"),"USD/JPY":("frxUSDJPY","USDJPY"),"AUD/USD":("frxAUDUSD","AUDUSD"),"USD/CAD":("frxUSDCAD","USDCAD"),"USD/CHF":("frxUSDCHF","USDCHF"),"EUR/JPY":("frxEURJPY","EURJPY"),"GBP/JPY":("frxGBPJPY","GBPJPY"),"EUR/GBP":("frxEURGBP","EURGBP"),"AUD/JPY":("frxAUDJPY","AUDJPY")}
 
 @st.cache_data(ttl=1,show_spinner=False)
 def get_market_data(symbol,count):
-    return asyncio.run(candles(symbol,count=count,granularity=60))
+    return load_history(symbol,count)
 
 def fit_model(raw,payout=.80):
     data=make_features(raw,5,True).dropna(subset=FEATURES+["target"]).copy()
@@ -62,7 +61,8 @@ def rank_markets(count):
     rows=[]
     for name,(sym,_) in MARKETS.items():
         try:
-            raw=asyncio.run(candles(sym,count=count,granularity=60))
+            raw=load_history(sym,count)
+            if raw.empty: continue
             model_data,metrics=fit_model(raw)
             feat=make_features(raw,5,False).dropna(subset=FEATURES)
             if feat.empty:
@@ -102,7 +102,8 @@ auto_key=f"trained_{market}_{train_count}"
 if not st.session_state.get(auto_key):
     with st.spinner(f"Entrenando automáticamente {market}..."):
         try:
-            hist=asyncio.run(candles(symbol,count=train_count,granularity=60))
+            hist=load_history(symbol,train_count)
+            if len(hist)<500: raise ValueError(f"Histórico local insuficiente: {len(hist)} velas")
             payload,metrics=fit_model(hist)
             st.session_state["model_payload"]=payload
             st.session_state["model_market"]=market
@@ -223,7 +224,7 @@ def live_panel():
         get_market_data.clear()
         df=get_market_data(symbol,max(500,bars))
     except Exception as e:
-        st.error(f"No se pudieron cargar datos de Deriv: {e}")
+        st.error(f"No se pudieron cargar datos del almacén local: {e}")
         return
 
     latest,prev=df.iloc[-1],df.iloc[-2]
@@ -294,7 +295,8 @@ def live_panel():
     trained_at=st.session_state.get("trained_at")
     if trained_at is not None and (now-trained_at).total_seconds() >= 1800:
         try:
-            fresh=asyncio.run(candles(symbol,count=train_count,granularity=60))
+            fresh=load_history(symbol,train_count)
+            if len(fresh)<500: raise ValueError("Histórico local insuficiente")
             new_payload,new_metrics=fit_model(fresh)
             st.session_state["model_payload"]=new_payload
             st.session_state["model_metrics"]=new_metrics
