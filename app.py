@@ -13,8 +13,13 @@ from src.history_store import load as load_history, count as history_count
 from src.binary5m import FEATURES, make_features, news_block, rsi
 
 st.set_page_config(page_title="Binary 5M AI | Deriv", page_icon="📈", layout="wide")
-st.title("Binary 5M AI — Deriv")
-st.caption("Dashboard de investigación. Mercado almacenado localmente desde Deriv. No ejecuta operaciones.")
+st.markdown("""<style>
+.block-container{padding-top:1.35rem;max-width:1500px}.exec-title{font-size:2rem;font-weight:800;letter-spacing:-.04em;margin-bottom:.15rem}.exec-sub{opacity:.7;margin-bottom:1rem}
+[data-testid="stMetric"]{background:rgba(127,127,127,.06);border:1px solid rgba(127,127,127,.15);padding:14px 16px;border-radius:16px}
+.signal-card{padding:20px 24px;border-radius:18px;border:1px solid rgba(127,127,127,.18);background:rgba(127,127,127,.055);margin:.4rem 0 1rem}.signal-big{font-size:2.25rem;font-weight:850;letter-spacing:-.04em}.muted{opacity:.68}
+</style>""",unsafe_allow_html=True)
+st.markdown('<div class="exec-title">Binary 5M · Centro de decisión</div>',unsafe_allow_html=True)
+st.markdown('<div class="exec-sub">Investigación en vivo · horizonte 5 minutos · sin ejecución automática de operaciones</div>',unsafe_allow_html=True)
 
 MARKETS={"EUR/USD":("frxEURUSD","EURUSD"),"GBP/USD":("frxGBPUSD","GBPUSD"),"USD/JPY":("frxUSDJPY","USDJPY"),"AUD/USD":("frxAUDUSD","AUDUSD"),"USD/CAD":("frxUSDCAD","USDCAD"),"USD/CHF":("frxUSDCHF","USDCHF"),"EUR/JPY":("frxEURJPY","EURJPY"),"GBP/JPY":("frxGBPJPY","GBPJPY"),"EUR/GBP":("frxEURGBP","EURGBP"),"AUD/JPY":("frxAUDJPY","AUDJPY")}
 
@@ -46,7 +51,7 @@ if st.session_state.get("recommended_market") in MARKETS:
 
 with st.sidebar:
     st.header("Navegación")
-    page=st.radio("Sección",["📈 Mercado","📊 Resultados","🧠 Sistema 24/7","📝 Evolución"],index=0)
+    page=st.radio("Sección",["🎯 Ejecutivo","📊 Resultados","🧠 Sistema 24/7","📝 Evolución"],index=0)
     st.divider()
     st.header("Configuración")
     market=st.selectbox("Activo",list(MARKETS),index=0,key="market_selector",help="Al abrir Mercado se selecciona automáticamente el mejor par operable; puedes cambiarlo manualmente.")
@@ -88,7 +93,7 @@ def rank_markets(count):
             continue
     return pd.DataFrame(rows).sort_values("Score",ascending=False) if rows else pd.DataFrame()
 
-if page=="📈 Mercado":
+if page=="🎯 Ejecutivo":
   ranking=rank_markets(min(train_count,3000))
   operables=ranking[ranking["Señal"]!="NO OPERAR"] if not ranking.empty else ranking
   if not operables.empty:
@@ -120,7 +125,7 @@ if page=="📈 Mercado":
 market=st.session_state.get("market_selector",market)
 symbol,pair=MARKETS[market]
 
-if page in ("📈 Mercado","🧠 Sistema 24/7"):
+if page in ("🎯 Ejecutivo","🧠 Sistema 24/7"):
     auto_key=f"trained_{market}_{train_count}"
     if not st.session_state.get(auto_key):
         with st.spinner(f"Entrenando automáticamente {market}..."):
@@ -353,14 +358,14 @@ def live_panel():
     latest,prev=df.iloc[-1],df.iloc[-2]
     change=(latest.close/prev.close-1)*100
     c1,c2,c3,c4=st.columns(4)
-    c1.metric("Activo",market)
-    c2.metric("Precio EN VIVO",f"{latest.close:.5f}",f"{change:+.3f}%")
+    c1.metric("Par seleccionado",market)
+    c2.metric("Precio",f"{latest.close:.5f}",f"{change:+.3f}%")
     c3.metric("Última vela",latest.timestamp.strftime("%H:%M UTC"))
-    c4.metric("Estado","🟢 EN VIVO")
+    c4.metric("Mercado","🟢 ACTIVO")
 
     view=df.tail(bars)
     fig=go.Figure(data=[go.Candlestick(x=view.timestamp,open=view.open,high=view.high,low=view.low,close=view.close,name=market)])
-    fig.update_layout(height=520,margin=dict(l=10,r=10,t=35,b=10),xaxis_rangeslider_visible=False,title=f"{market} — velas de 1 minuto",yaxis_title="Precio",uirevision=market,transition_duration=0)
+    fig.update_layout(height=520,margin=dict(l=10,r=10,t=35,b=10),xaxis_rangeslider_visible=False,title=f"{market} · contexto de precio",yaxis_title="Precio",uirevision=market,transition_duration=0)
     st.plotly_chart(fig,width="stretch",key=f"live-chart-{market}",config={"displayModeBar":False})
 
     features=make_features(df,5,False)
@@ -377,7 +382,7 @@ def live_panel():
         news_df.to_csv(news_path,index=False)
     blocked,news_reason=news_block(latest.timestamp,news_path,(pair[:3],pair[3:6]))
 
-    st.subheader("Análisis en vivo")
+    st.markdown("### Lectura rápida")
     a,b,c,d=st.columns(4)
     a.metric("RSI 14",f"{rsi_value:.1f}")
     b.metric("Tendencia EMA 9/21",trend)
@@ -416,7 +421,7 @@ def live_panel():
 
     # El entrenamiento pertenece al worker 24/7; la interfaz solo visualiza.
 
-    st.subheader("Alerta de 5 minutos")
+    st.markdown("### Decisión del próximo bloque")
     if payload is not None and not usable.empty:
         alert_key=f"alert_{market}"
         saved=st.session_state.get(alert_key)
@@ -431,11 +436,14 @@ def live_panel():
                 if len(history)>200:
                     del history[:-200]
         saved=st.session_state[alert_key]
+        sig=saved["decision"]
+        quality="ALTA" if sig!="NO OPERAR" and saved["confidence"]>=.66 else ("SELECTIVA" if sig!="NO OPERAR" else "ESPERAR")
+        st.markdown(f'<div class="signal-card"><div class="muted">DECISIÓN ACTUAL · {market}</div><div class="signal-big">{sig}</div><div class="muted">Calidad: {quality} · horizonte 5 min</div></div>',unsafe_allow_html=True)
         x,y,z,w=st.columns(4)
-        x.metric("Alerta",saved["decision"])
-        y.metric("Confianza",f"{saved['confidence']:.1%}")
-        z.metric("P(SUBE) / P(BAJA)",f"{saved['p']:.1%} / {1-saved['p']:.1%}")
-        w.metric("Próxima alerta",f"{remaining//60:02d}:{remaining%60:02d}")
+        x.metric("Confianza",f"{saved['confidence']:.1%}")
+        y.metric("Prob. SUBE",f"{saved['p']:.1%}")
+        z.metric("Prob. BAJA",f"{1-saved['p']:.1%}")
+        w.metric("Nuevo bloque",f"{remaining//60:02d}:{remaining%60:02d}")
         if saved["bucket"] > alert_bucket:
             st.success(f"⚡ ALERTA ANTICIPADA: señal para {saved['bucket'].strftime('%H:%M')}–{(saved['bucket']+pd.Timedelta(minutes=5)).strftime('%H:%M')} UTC. Faltan {remaining} s para iniciar.")
         else:
@@ -443,7 +451,7 @@ def live_panel():
     else:
         st.warning("El modelo automático todavía se está preparando. La alerta aparecerá en cuanto esté listo.")
 
-    if page!="📈 Mercado":
+    if page!="🎯 Ejecutivo":
         st.subheader("Aprendizaje en vivo")
         completed=[r for r in history if r["result"] in ("GANADA","PERDIDA")]
         wins=sum(r["result"]=="GANADA" for r in completed)
@@ -466,7 +474,7 @@ def live_panel():
     else:
         st.info(f"Filtro de noticias: {news_reason}")
 
-if page=="📈 Mercado":
+if page=="🎯 Ejecutivo":
     live_panel()
 
 if page=="🧠 Sistema 24/7":
