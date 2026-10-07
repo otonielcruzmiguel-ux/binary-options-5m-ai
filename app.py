@@ -39,6 +39,10 @@ def fit_model(raw,payout=.80):
     pnl=float(np.where(pred[take]==y[take],payout,-1.0).sum()) if take.any() else 0.0
     return {"model":model,"features":FEATURES,"threshold":threshold,"payout":payout}, {"rows":len(data),"test":len(te),"signals":int(take.sum()),"accuracy":all_acc,"signal_accuracy":trade_acc,"pnl":pnl}
 
+# Aplicar una recomendación pendiente ANTES de instanciar el selectbox.
+if st.session_state.get("recommended_market") in MARKETS:
+    st.session_state["market_selector"]=st.session_state.pop("recommended_market")
+
 with st.sidebar:
     st.header("Navegación")
     page=st.radio("Sección",["📈 Mercado","📊 Resultados","🧠 Sistema 24/7","📝 Evolución"],index=0)
@@ -89,11 +93,11 @@ if page=="📈 Mercado":
   if not operables.empty:
       best=operables.iloc[0]
       best_market=str(best["Par"])
+      # El selectbox ya existe en esta ejecución; no mutamos su key aquí.
+      # Guardamos la recomendación y la aplicamos de forma segura en el siguiente rerun.
       if not st.session_state.get("auto_best_selected"):
           st.session_state["auto_best_selected"]=True
-          if st.session_state.get("market_selector") != best_market:
-              st.session_state["market_selector"]=best_market
-              st.rerun()
+          st.session_state["recommended_market"]=best_market
   with st.expander("🏆 Selección automática",expanded=False):
       ranking=rank_markets(min(train_count,3000))
       operables=ranking[ranking["Señal"]!="NO OPERAR"] if not ranking.empty else ranking
