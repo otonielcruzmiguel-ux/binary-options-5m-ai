@@ -338,23 +338,24 @@ def live_panel():
     else:
         st.warning("El modelo automático todavía se está preparando. La alerta aparecerá en cuanto esté listo.")
 
-    st.subheader("Aprendizaje en vivo")
-    completed=[r for r in history if r["result"] in ("GANADA","PERDIDA")]
-    wins=sum(r["result"]=="GANADA" for r in completed)
-    losses=sum(r["result"]=="PERDIDA" for r in completed)
-    rate=(wins/len(completed)*100) if completed else None
-    l1,l2,l3,l4=st.columns(4)
-    l1.metric("Alertas evaluadas",len(completed))
-    l2.metric("Ganadas",wins)
-    l3.metric("Perdidas",losses)
-    l4.metric("Acierto en vivo","—" if rate is None else f"{rate:.1f}%")
-    st.caption("El modelo registra cada señal, comprueba el resultado 5 minutos después y se reentrena cada 30 minutos con las velas más recientes. Más reentrenamiento no garantiza mayor precisión.")
-    if history:
-        table=pd.DataFrame(history[-20:]).copy()
-        table["hora"]=table["bucket"].apply(lambda x:x.strftime("%H:%M"))
-        table["confianza"]=table["confidence"].apply(lambda x:f"{x:.1%}")
-        st.dataframe(table[["hora","decision","confianza","entry_price","exit_price","result"]].iloc[::-1],width="stretch",hide_index=True)
-
+    if page!="📈 Mercado":
+        st.subheader("Aprendizaje en vivo")
+        completed=[r for r in history if r["result"] in ("GANADA","PERDIDA")]
+        wins=sum(r["result"]=="GANADA" for r in completed)
+        losses=sum(r["result"]=="PERDIDA" for r in completed)
+        rate=(wins/len(completed)*100) if completed else None
+        l1,l2,l3,l4=st.columns(4)
+        l1.metric("Alertas evaluadas",len(completed))
+        l2.metric("Ganadas",wins)
+        l3.metric("Perdidas",losses)
+        l4.metric("Acierto en vivo","—" if rate is None else f"{rate:.1f}%")
+        st.caption("El modelo registra cada señal, comprueba el resultado 5 minutos después y se reentrena cada 30 minutos con las velas más recientes. Más reentrenamiento no garantiza mayor precisión.")
+        if history:
+            table=pd.DataFrame(history[-20:]).copy()
+            table["hora"]=table["bucket"].apply(lambda x:x.strftime("%H:%M"))
+            table["confianza"]=table["confidence"].apply(lambda x:f"{x:.1%}")
+            st.dataframe(table[["hora","decision","confianza","entry_price","exit_price","result"]].iloc[::-1],width="stretch",hide_index=True)
+    
     if blocked:
         st.error(f"Filtro de noticias: {news_reason}")
     else:
