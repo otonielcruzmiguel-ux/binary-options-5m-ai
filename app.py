@@ -112,6 +112,62 @@ if not st.session_state.get(auto_key):
         except Exception as e:
             st.error(f"No se pudo entrenar automáticamente: {e}")
 
+def persistent_learning_panel():
+    db_path=Path("/data/learning.db")
+    st.subheader("📚 Aprendizaje 24/7")
+    if not db_path.exists():
+        st.info("El worker 24/7 todavía no ha creado datos persistentes.")
+        return
+    try:
+        import sqlite3
+        con=sqlite3.connect(f"file:{db_path}?mode=ro",uri=True,timeout=2)
+        hist=pd.read_sql_query("SELECT market,bucket,expires,decision,entry,exit,confidence,result FROM signals ORDER BY bucket DESC",con)
+        con.close()
+    except Exception as e:
+        st.warning(f"No se pudo leer el aprendizaje persistente: {e}")
+        return
+    if hist.empty:
+        st.info("El worker está activo, pero todavía no hay señales registradas.")
+        return
+
+    evaluated=hist[hist["result"].isin(["GANADA","PERDIDA","EMPATE"])].copy()
+    wins=int((evaluated["result"]=="GANADA").sum())
+    losses=int((evaluated["result"]=="PERDIDA").sum())
+    ties=int((evaluated["result"]=="EMPATE").sum())
+    decided=wins+losses
+    accuracy=(wins/decided) if decided else float("nan")
+    pending=int((hist["result"]=="PENDIENTE").sum())
+
+    p1,p2,p3,p4,p5=st.columns(5)
+    p1.metric("Evaluadas",len(evaluated))
+    p2.metric("Ganadas",wins)
+    p3.metric("Perdidas",losses)
+    p4.metric("Accuracy","—" if np.isnan(accuracy) else f"{accuracy:.1%}")
+    p5.metric("Pendientes",pending)
+
+    rows=[]
+    for name,g in evaluated.groupby("market"):
+        w=int((g["result"]=="GANADA").sum())
+        l=int((g["result"]=="PERDIDA").sum())
+        t=int((g["result"]=="EMPATE").sum())
+        n=w+l
+        rows.append({"Par":name,"Evaluadas":len(g),"Ganadas":w,"Perdidas":l,"Empates":t,"Accuracy":(w/n if n else np.nan)})
+    if rows:
+        by_pair=pd.DataFrame(rows).sort_values(["Accuracy","Evaluadas"],ascending=[False,False])
+        by_pair["Accuracy"]=by_pair["Accuracy"].map(lambda v:"—" if pd.isna(v) else f"{v:.1%}")
+        st.dataframe(by_pair,width="stretch",hide_index=True)
+
+    last=hist.head(20).copy()
+    last["Confianza"]=pd.to_numeric(last["confidence"],errors="coerce").map(lambda v:"—" if pd.isna(v) else f"{v:.1%}")
+    last["bucket"]=pd.to_datetime(last["bucket"],utc=True,errors="coerce").dt.strftime("%Y-%m-%d %H:%M")
+    st.caption("Últimas 20 señales guardadas por el worker 24/7")
+    st.dataframe(last[["bucket","market","decision","Confianza","result"]].rename(columns={"bucket":"Hora UTC","market":"Par","decision":"Señal","result":"Resultado"}),width="stretch",hide_index=True)
+    newest=pd.to_datetime(hist["bucket"],utc=True,errors="coerce").max()
+    if pd.notna(newest):
+        st.caption(f"Último ciclo registrado: {newest.strftime('%Y-%m-%d %H:%M UTC')}. Los resultados persistentes continúan aunque cierres esta página.")
+
+persistent_learning_panel()
+
 @st.fragment(run_every="2s")
 def live_panel():
     try:
