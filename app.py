@@ -334,10 +334,9 @@ if page=="📝 Evolución":
         st.info("Esperando que el worker cree la bitácora persistente.")
 
 
-@st.fragment(run_every="2s")
+@st.fragment(run_every="10s")
 def live_panel():
     try:
-        get_market_data.clear()
         df=get_market_data(symbol,max(500,bars))
     except Exception as e:
         st.error(f"No se pudieron cargar datos del almacén local: {e}")
@@ -353,8 +352,8 @@ def live_panel():
 
     view=df.tail(bars)
     fig=go.Figure(data=[go.Candlestick(x=view.timestamp,open=view.open,high=view.high,low=view.low,close=view.close,name=market)])
-    fig.update_layout(height=570,margin=dict(l=10,r=10,t=35,b=10),xaxis_rangeslider_visible=False,title=f"{market} — velas de 1 minuto",yaxis_title="Precio",uirevision=market)
-    st.plotly_chart(fig,use_container_width=True,key=f"live-chart-{market}")
+    fig.update_layout(height=520,margin=dict(l=10,r=10,t=35,b=10),xaxis_rangeslider_visible=False,title=f"{market} — velas de 1 minuto",yaxis_title="Precio",uirevision=market,transition_duration=0)
+    st.plotly_chart(fig,width="stretch",key=f"live-chart-{market}",config={"displayModeBar":False})
 
     features=make_features(df,5,False)
     usable=features.dropna(subset=FEATURES)
@@ -407,19 +406,7 @@ def live_panel():
                     won=(rec["decision"]=="SUBE" and exit_price>rec["entry_price"]) or (rec["decision"]=="BAJA" and exit_price<rec["entry_price"])
                     rec["result"]="GANADA" if won else "PERDIDA"
 
-    # Reentrena cada 30 minutos con las velas más recientes.
-    trained_at=st.session_state.get("trained_at")
-    if trained_at is not None and (now-trained_at).total_seconds() >= 1800:
-        try:
-            fresh=load_history(symbol,train_count)
-            if len(fresh)<500: raise ValueError("Histórico local insuficiente")
-            new_payload,new_metrics=fit_model(fresh)
-            st.session_state["model_payload"]=new_payload
-            st.session_state["model_metrics"]=new_metrics
-            st.session_state["trained_at"]=now
-            payload=new_payload
-        except Exception:
-            pass
+    # El entrenamiento pertenece al worker 24/7; la interfaz solo visualiza.
 
     st.subheader("Alerta de 5 minutos")
     if payload is not None and not usable.empty:
