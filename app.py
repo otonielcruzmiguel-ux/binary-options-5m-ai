@@ -51,7 +51,8 @@ if st.session_state.get("recommended_market") in MARKETS:
 
 with st.sidebar:
     st.header("Navegación")
-    page=st.radio("Sección",["⚡ Ejecutivo 1M","🎯 Ejecutivo 5M","📊 Resultados","🧠 Sistema 24/7","📝 Evolución"],index=1)
+    page=st.radio("Sección",["🎯 Ejecutivo","📊 Resultados","🧠 Sistema 24/7","📝 Evolución"],index=0)
+    horizon=st.segmented_control("Horizonte",["1 minuto","5 minutos"],default="5 minutos") if page in ("🎯 Ejecutivo","📊 Resultados") else "5 minutos"
     st.divider()
     st.header("Configuración")
     market=st.selectbox("Activo",list(MARKETS),index=0,key="market_selector",help="Al abrir Mercado se selecciona automáticamente el mejor par operable; puedes cambiarlo manualmente.")
@@ -93,7 +94,7 @@ def rank_markets(count):
             continue
     return pd.DataFrame(rows).sort_values("Score",ascending=False) if rows else pd.DataFrame()
 
-if page=="🎯 Ejecutivo 5M":
+if page=="🎯 Ejecutivo" and horizon=="5 minutos":
   ranking=rank_markets(min(train_count,3000))
   operables=ranking[ranking["Señal"]!="NO OPERAR"] if not ranking.empty else ranking
   if not operables.empty:
@@ -125,7 +126,7 @@ if page=="🎯 Ejecutivo 5M":
 market=st.session_state.get("market_selector",market)
 symbol,pair=MARKETS[market]
 
-if page in ("🎯 Ejecutivo 5M","🧠 Sistema 24/7"):
+if (page=="🎯 Ejecutivo" and horizon=="5 minutos") or page=="🧠 Sistema 24/7":
     auto_key=f"trained_{market}_{train_count}"
     if not st.session_state.get(auto_key):
         with st.spinner(f"Entrenando automáticamente {market}..."):
@@ -142,16 +143,17 @@ if page in ("🎯 Ejecutivo 5M","🧠 Sistema 24/7"):
             except Exception as e:
                 st.error(f"No se pudo entrenar automáticamente: {e}")
 
-def persistent_learning_panel():
+def persistent_learning_panel(horizon="5 minutos"):
     db_path=Path("/data/learning.db")
-    st.subheader("📚 Aprendizaje 24/7")
+    st.subheader(f"📚 Resultados · {horizon}")
     if not db_path.exists():
         st.info("El worker 24/7 todavía no ha creado datos persistentes.")
         return
     try:
         import sqlite3
         con=sqlite3.connect(f"file:{db_path}?mode=ro",uri=True,timeout=2)
-        hist=pd.read_sql_query("SELECT market,bucket,expires,decision,entry,exit,confidence,result,context FROM signals ORDER BY bucket DESC",con)
+        table="signals_1m" if horizon=="1 minuto" else "signals"
+        hist=pd.read_sql_query(f"SELECT market,bucket,expires,decision,entry,exit,confidence,result,context FROM {table} ORDER BY bucket DESC",con)
         con.close()
     except Exception as e:
         st.warning(f"No se pudo leer el aprendizaje persistente: {e}")
@@ -324,7 +326,7 @@ def persistent_learning_panel():
                     pass
 
 if page=="📊 Resultados":
-    persistent_learning_panel()
+    persistent_learning_panel(horizon)
 
 if page=="📝 Evolución":
     st.subheader("📝 Bitácora de evolución")
@@ -382,7 +384,7 @@ def executive_1m():
     except Exception as e:
         st.warning(f"Motor 1M inicializándose: {e}")
 
-if page=="⚡ Ejecutivo 1M":
+if page=="🎯 Ejecutivo" and horizon=="1 minuto":
     executive_1m()
 
 @st.fragment(run_every="3s")
@@ -489,7 +491,7 @@ def live_panel():
     else:
         st.warning("El modelo automático todavía se está preparando. La alerta aparecerá en cuanto esté listo.")
 
-    if page not in ("🎯 Ejecutivo 5M","⚡ Ejecutivo 1M"):
+    if page!="🎯 Ejecutivo":
         st.subheader("Aprendizaje en vivo")
         completed=[r for r in history if r["result"] in ("GANADA","PERDIDA")]
         wins=sum(r["result"]=="GANADA" for r in completed)
@@ -512,7 +514,7 @@ def live_panel():
     else:
         st.info(f"Filtro de noticias: {news_reason}")
 
-if page=="🎯 Ejecutivo 5M":
+if page=="🎯 Ejecutivo" and horizon=="5 minutos":
     live_panel()
 
 if page=="🧠 Sistema 24/7":
