@@ -104,6 +104,17 @@ def adaptive_threshold(con,market,now):
     adj=.03 if acc<.56 else (.015 if acc<.60 else (-.005 if acc>=.66 and n>=60 else 0))
     return min(.68,max(THRESHOLD,THRESHOLD+adj)),n,acc
 
+def pair_quarantine(con,market,now,table="signals",min_sample=80):
+    # Cuarentena basada sólo en resultados forward recientes, no en entrenamiento.
+    since=(now-pd.Timedelta(days=7)).isoformat()
+    rows=con.execute(f"SELECT result FROM {table} WHERE market=? AND bucket>=? AND result IN ('GANADA','PERDIDA')",(market,since)).fetchall()
+    n=len(rows)
+    if n<min_sample: return True,n,None,None
+    wins=sum(r[0]=="GANADA" for r in rows); acc=wins/n
+    expectancy=(wins*PAYOUT-(n-wins))/n
+    # Exige al menos equilibrio teórico; el par sigue entrenando aunque quede bloqueado.
+    return acc>=BREAK_EVEN,n,acc,expectancy
+
 def hour_quality(con,market,now):
     # Sólo bloquea una franja cuando ya existe muestra forward razonable en esa misma hora UTC.
     hour=now.hour
@@ -223,6 +234,10 @@ async def cycle():
                     if dec1!="NO OPERAR":
                         votes1,opp1=directional_quality(row1,dec1)
                         if votes1<2 or opp1>=2: dec1="NO OPERAR"
+                    pair1_ok,pair1_n,pair1_acc,pair1_exp=pair_quarantine(con,market,now,"signals_1m",80)
+                    if dec1!="NO OPERAR" and not pair1_ok:
+                        dec1="NO OPERAR"
+                        print(f"CUARENTENA_1M market={market} n={pair1_n} accuracy={pair1_acc:.3f} expectativa={pair1_exp:.3f}",flush=True)
                     base1,quote1=market.split("/")
                     blocked1,_,_=news_block(now,(base1,quote1),before=15,after=30)
                     if blocked1: dec1="NO OPERAR"
@@ -254,7 +269,10 @@ async def cycle():
             hour_ok,hour_n,hour_acc=hour_quality(con,market,now)
             if decision!="NO OPERAR" and not hour_ok:
                 decision="NO OPERAR"; gate_reason=f"horario débil n={hour_n} acc={hour_acc:.3f}"
-            # El filtro por par ya eleva el umbral con muestra forward reciente.
+            pair_ok,pair_n,pair_acc,pair_exp=pair_quarantine(con,market,now,"signals",80)
+            if decision!="NO OPERAR" and not pair_ok:
+                decision="NO OPERAR"; gate_reason=f"par en cuarentena n={pair_n} acc={pair_acc:.3f} expectativa={pair_exp:.3f}"
+                print(f"CUARENTENA_5M market={market} n={pair_n} accuracy={pair_acc:.3f} expectativa={pair_exp:.3f}",flush=True)
             base,quote=market.split("/")
             blocked,news_reason,news_event=news_block(now,(base,quote),before=15,after=30)
             if blocked:
