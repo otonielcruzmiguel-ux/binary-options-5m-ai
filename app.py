@@ -219,14 +219,19 @@ def persistent_learning_panel():
     if rows:
         by_pair=pd.DataFrame(rows).sort_values(["Accuracy","Evaluadas"],ascending=[False,False])
         st.markdown("### Rendimiento por par")
-        visual=by_pair.dropna(subset=["Accuracy"]).sort_values("Accuracy",ascending=True)
-        if not visual.empty:
-            visual=visual.sort_values("Accuracy",ascending=False)
+        pair_history=evaluated[evaluated["result"].isin(["GANADA","PERDIDA"])].copy()
+        if not pair_history.empty:
+            pair_history["bucket"]=pd.to_datetime(pair_history["bucket"],utc=True,errors="coerce")
+            pair_history=pair_history.sort_values("bucket")
+            pair_history["win"]=(pair_history["result"]=="GANADA").astype(int)
             palette=["#00E676","#00B8D4","#2979FF","#7C4DFF","#F500A5","#FFD600","#FF9100","#00C853","#651FFF","#FF1744"]
             pf=go.Figure()
-            pf.add_trace(go.Scatter(x=visual["Par"],y=visual["Accuracy"]*100,mode="lines+markers+text",text=visual["Accuracy"].map(lambda v:f"{v:.1%}"),textposition="top center",line=dict(width=4,color="#00B8D4"),marker=dict(size=12,color=palette[:len(visual)],line=dict(width=2,color="#111827")),hovertemplate="%{x}: %{y:.1f}%<extra></extra>"))
+            for i,(pair_name,g) in enumerate(pair_history.groupby("market")):
+                g=g.sort_values("bucket").copy()
+                g["Acierto móvil"]=g["win"].rolling(15,min_periods=3).mean()*100
+                pf.add_trace(go.Scatter(x=g["bucket"],y=g["Acierto móvil"],mode="lines+markers",name=pair_name,line=dict(width=3,color=palette[i%len(palette)]),marker=dict(size=6,color=palette[i%len(palette)]),connectgaps=True,hovertemplate=f"{pair_name}<br>%{{x}}<br>%{{y:.1f}}%<extra></extra>"))
             pf.add_hline(y=55.6,line_dash="dash",line_color="#FF1744",annotation_text="Referencia 55.6%")
-            pf.update_layout(title="Rendimiento por par",height=420,margin=dict(l=20,r=30,t=60,b=55),xaxis_title=None,yaxis=dict(title="Acierto %",range=[0,100]),showlegend=False,hovermode="x")
+            pf.update_layout(title="Evolución del acierto por par · media móvil de 15 resultados",height=500,margin=dict(l=20,r=30,t=60,b=45),xaxis_title=None,yaxis=dict(title="Acierto %",range=[0,100]),legend=dict(orientation="h",yanchor="bottom",y=1.02,xanchor="left",x=0),hovermode="x unified")
             st.plotly_chart(pf,width="stretch",key="pair-performance")
         by_pair["Indicador"]=by_pair.apply(lambda r:"⚪ Poca muestra" if (r["Ganadas"]+r["Perdidas"])<30 else ("🟢 Fuerte" if r["Accuracy"]>=.62 else ("🟡 Vigilar" if r["Accuracy"]>=.56 else "🔴 Débil")),axis=1)
         by_pair["Accuracy"]=by_pair["Accuracy"].map(lambda v:"—" if pd.isna(v) else f"{v:.1%}")
