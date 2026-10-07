@@ -1,3 +1,4 @@
+import json
 import asyncio
 from pathlib import Path
 import joblib
@@ -121,7 +122,7 @@ def persistent_learning_panel():
     try:
         import sqlite3
         con=sqlite3.connect(f"file:{db_path}?mode=ro",uri=True,timeout=2)
-        hist=pd.read_sql_query("SELECT market,bucket,expires,decision,entry,exit,confidence,result FROM signals ORDER BY bucket DESC",con)
+        hist=pd.read_sql_query("SELECT market,bucket,expires,decision,entry,exit,confidence,result,context FROM signals ORDER BY bucket DESC",con)
         con.close()
     except Exception as e:
         st.warning(f"No se pudo leer el aprendizaje persistente: {e}")
@@ -165,6 +166,25 @@ def persistent_learning_panel():
     newest=pd.to_datetime(hist["bucket"],utc=True,errors="coerce").max()
     if pd.notna(newest):
         st.caption(f"Último ciclo registrado: {newest.strftime('%Y-%m-%d %H:%M UTC')}. Los resultados persistentes continúan aunque cierres esta página.")
+    try:
+        summaries=pd.read_sql_query("SELECT period,evaluated,wins,losses,ties,accuracy FROM summaries ORDER BY period DESC LIMIT 12",sqlite3.connect(f"file:{db_path}?mode=ro",uri=True))
+        if not summaries.empty:
+            st.markdown("**Resumen por bloques de 8 horas**")
+            summaries["accuracy"]=summaries["accuracy"].map(lambda v:"—" if pd.isna(v) else f"{v:.1%}")
+            st.dataframe(summaries.rename(columns={"period":"Periodo UTC","evaluated":"Evaluadas","wins":"Ganadas","losses":"Perdidas","ties":"Empates","accuracy":"Accuracy"}),width="stretch",hide_index=True)
+    except Exception:
+        pass
+    failures=hist[hist["result"]=="PERDIDA"].head(10)
+    if not failures.empty:
+        with st.expander("🔎 Diagnóstico de los últimos fallos"):
+            st.caption("Guarda el contexto técnico de cada pérdida para detectar patrones repetidos. No cambia el modelo por una sola pérdida; esos datos se usan para comparar y corregir con suficiente muestra.")
+            for _,r in failures.iterrows():
+                try:
+                    ctx=json.loads(r.get("context") or "{}")
+                    active=[k for k,v in ctx.items() if k!="confluence" and abs(float(v))>0]
+                    st.write(f"{r['market']} · {r['decision']} · confianza {float(r['confidence']):.1%} · confluencia {float(ctx.get('confluence',0)):+.2f} · condiciones: {', '.join(active[:6]) or 'sin condición fuerte'}")
+                except Exception:
+                    pass
 
 persistent_learning_panel()
 
