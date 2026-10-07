@@ -2,9 +2,8 @@ import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import joblib, pandas as pd
-from src.deriv_market import candles
+from src.history_store import load
 from src.binary5m import FEATURES, make_features
-import asyncio
 
 MARKETS={"EUR/USD":"frxEURUSD","GBP/USD":"frxGBPUSD","USD/JPY":"frxUSDJPY","AUD/USD":"frxAUDUSD","USD/CAD":"frxUSDCAD","USD/CHF":"frxUSDCHF","EUR/JPY":"frxEURJPY","GBP/JPY":"frxGBPJPY","EUR/GBP":"frxEURGBP","AUD/JPY":"frxAUDJPY"}
 
@@ -20,7 +19,8 @@ class Handler(BaseHTTPRequestHandler):
             path=Path(f"/data/model_{symbol}.joblib")
             if not path.exists(): raise RuntimeError("modelo aún no disponible")
             payload=joblib.load(path)
-            raw=asyncio.run(candles(symbol,count=300,granularity=60))
+            raw=load(symbol,300)
+            if raw.empty: raise RuntimeError("histórico local aún no disponible")
             feat=make_features(raw,5,False).dropna(subset=FEATURES)
             p=float(payload["model"].predict_proba(feat[payload["features"]].iloc[[-1]])[0,1])
             th=float(payload.get("threshold",.59))
