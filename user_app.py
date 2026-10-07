@@ -8,7 +8,6 @@ import joblib
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from src.deriv_market import candles
 from src.binary5m import FEATURES, make_features
 
 st.set_page_config(page_title="Binary 5M AI | Señales",page_icon="📈",layout="wide")
@@ -36,9 +35,14 @@ symbol=MARKETS[market]
 
 @st.cache_data(ttl=5,show_spinner=False)
 def market_data(sym,count):
-    # El gráfico usa la API privada para la señal; mantenemos esta lectura temporal
-    # hasta exponer velas locales por la misma API.
-    return asyncio.run(candles(sym,count=count,granularity=60))
+    base=os.environ.get("SIGNAL_API_URL","http://binary-options-5m-ai.railway.internal:8090")
+    market_name=next(k for k,v in MARKETS.items() if v==sym)
+    url=base+"/candles/"+urllib.parse.quote(market_name,safe="")
+    with urllib.request.urlopen(url,timeout=1.5) as resp:
+        obj=json.loads(resp.read().decode())
+    d=pd.DataFrame(obj["candles"])
+    d["timestamp"]=pd.to_datetime(d["timestamp"],utc=True)
+    return d.tail(count)
 
 @st.fragment(run_every="0.5s")
 def user_panel():
