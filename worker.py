@@ -140,9 +140,20 @@ def summarize(con,now):
     vals=[r[0] for r in rows if r[0] in ("GANADA","PERDIDA","EMPATE")]
     w=vals.count("GANADA"); l=vals.count("PERDIDA"); t=vals.count("EMPATE"); n=w+l
     acc=w/n if n else None
+    expectancy=((w*PAYOUT-l)/n) if n else None
     con.execute("INSERT OR IGNORE INTO summaries VALUES(?,?,?,?,?,?,?)",(period,now.isoformat(),len(vals),w,l,t,acc))
     con.commit()
-    print(f"RESUMEN_8H evaluadas={len(vals)} ganadas={w} perdidas={l} empates={t} accuracy={'NA' if acc is None else f'{acc:.3f}'}",flush=True)
+    # Diagnóstico por contexto: qué familias aparecen más en pérdidas recientes.
+    loss_rows=con.execute("SELECT context FROM signals WHERE bucket>=? AND result='PERDIDA'",(start.isoformat(),)).fetchall()
+    causes={}
+    for (raw_ctx,) in loss_rows:
+        try:
+            ctx=json.loads(raw_ctx or "{}")
+            for k in STRATEGY_FIELDS:
+                if abs(float(ctx.get(k,0) or 0))>0: causes[k]=causes.get(k,0)+1
+        except Exception: pass
+    top_causes=sorted(causes.items(),key=lambda kv:kv[1],reverse=True)[:4]
+    print(f"RESUMEN_8H evaluadas={len(vals)} ganadas={w} perdidas={l} empates={t} accuracy={'NA' if acc is None else f'{acc:.3f}'} expectativa={'NA' if expectancy is None else f'{expectancy:.3f}'} causas_perdida={top_causes}",flush=True)
 
 async def cycle():
     global _last_news_refresh
