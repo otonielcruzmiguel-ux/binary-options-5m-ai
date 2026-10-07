@@ -1,4 +1,5 @@
 import json
+from io import BytesIO
 from pathlib import Path
 import joblib
 import numpy as np
@@ -190,7 +191,7 @@ def persistent_learning_panel():
     if decided:
         left,right=st.columns([1,1.7])
         with left:
-            donut=go.Figure(go.Pie(labels=["Ganadas","Perdidas"],values=[wins,losses],hole=.68,textinfo="label+percent",hovertemplate="%{label}: %{value}<extra></extra>"))
+            donut=go.Figure(go.Pie(labels=["Ganadas","Perdidas"],values=[wins,losses],hole=.68,textinfo="label+percent",marker=dict(colors=["#A8E6CF","#FFAAA5"],line=dict(color="#20242c",width=2)),hovertemplate="%{label}: %{value}<extra></extra>"))
             donut.update_layout(title="Balance de resultados",height=330,margin=dict(l=20,r=20,t=55,b=20),showlegend=False,annotations=[dict(text=f"{accuracy:.1%}",x=.5,y=.5,font_size=25,showarrow=False)])
             st.plotly_chart(donut,width="stretch",key="results-donut")
         with right:
@@ -200,8 +201,11 @@ def persistent_learning_panel():
             trend["win"]=(trend["result"]=="GANADA").astype(int)
             trend["Acierto móvil"]=trend["win"].rolling(15,min_periods=5).mean()*100
             tf=go.Figure()
-            tf.add_trace(go.Scatter(x=trend["bucket"],y=trend["Acierto móvil"],mode="lines+markers",name="Últimas 15",line=dict(width=3)))
-            tf.add_hline(y=55.6,line_dash="dash",annotation_text="Referencia 55.6%")
+            trend["Acierto 30"]=trend["win"].rolling(30,min_periods=8).mean()*100
+            tf.add_trace(go.Scatter(x=trend["bucket"],y=trend["Acierto móvil"],mode="lines+markers",name="Media 15",line=dict(width=3,color="#B8B5FF"),marker=dict(color="#B8B5FF")))
+            tf.add_trace(go.Scatter(x=trend["bucket"],y=trend["Acierto 30"],mode="lines",name="Media 30",line=dict(width=3,color="#FFD3B6")))
+            tf.add_hline(y=accuracy*100,line_dash="dot",line_color="#A8D8EA",annotation_text="Promedio total")
+            tf.add_hline(y=55.6,line_dash="dash",line_color="#FFAAA5",annotation_text="Referencia 55.6%")
             tf.update_layout(title="Tendencia reciente",height=330,margin=dict(l=20,r=20,t=55,b=20),yaxis=dict(title="Acierto %",range=[0,100]),xaxis_title=None,hovermode="x unified")
             st.plotly_chart(tf,width="stretch",key="results-trend")
 
@@ -217,13 +221,37 @@ def persistent_learning_panel():
         st.markdown("### Rendimiento por par")
         visual=by_pair.dropna(subset=["Accuracy"]).sort_values("Accuracy",ascending=True)
         if not visual.empty:
-            pf=go.Figure(go.Bar(x=visual["Accuracy"]*100,y=visual["Par"],orientation="h",text=visual["Accuracy"].map(lambda v:f"{v:.1%}"),textposition="outside",hovertemplate="%{y}: %{x:.1f}%<extra></extra>"))
-            pf.add_vline(x=55.6,line_dash="dash",annotation_text="Referencia 55.6%")
+            pf=go.Figure(go.Bar(x=visual["Accuracy"]*100,y=visual["Par"],orientation="h",text=visual["Accuracy"].map(lambda v:f"{v:.1%}"),textposition="outside",marker=dict(color=["#FFB7B2","#FFDAC1","#E2F0CB","#B5EAD7","#C7CEEA","#D5AAFF","#A8D8EA","#F6C1C7","#B8E0D2","#F3D1F4"][:len(visual)]),hovertemplate="%{y}: %{x:.1f}%<extra></extra>"))
+            pf.add_vline(x=55.6,line_dash="dash",line_color="#FFAAA5",annotation_text="Referencia 55.6%")
             pf.update_layout(title="Comparación de pares",height=max(360,55*len(visual)),margin=dict(l=20,r=70,t=55,b=35),xaxis=dict(title="Acierto %",range=[0,100]),yaxis_title=None,showlegend=False)
             st.plotly_chart(pf,width="stretch",key="pair-performance")
         by_pair["Indicador"]=by_pair.apply(lambda r:"⚪ Poca muestra" if (r["Ganadas"]+r["Perdidas"])<30 else ("🟢 Fuerte" if r["Accuracy"]>=.62 else ("🟡 Vigilar" if r["Accuracy"]>=.56 else "🔴 Débil")),axis=1)
         by_pair["Accuracy"]=by_pair["Accuracy"].map(lambda v:"—" if pd.isna(v) else f"{v:.1%}")
         st.dataframe(by_pair[["Par","Indicador","Evaluadas","Ganadas","Perdidas","Accuracy"]],width="stretch",hide_index=True)
+
+    # Evolución acumulada y exportación para análisis personal.
+    decided_curve=evaluated[evaluated["result"].isin(["GANADA","PERDIDA"])].copy()
+    if not decided_curve.empty:
+        decided_curve["bucket"]=pd.to_datetime(decided_curve["bucket"],utc=True,errors="coerce")
+        decided_curve=decided_curve.sort_values("bucket")
+        decided_curve["Balance acumulado"]=np.where(decided_curve["result"]=="GANADA",.80,-1.0).cumsum()
+        cf=go.Figure(go.Scatter(x=decided_curve["bucket"],y=decided_curve["Balance acumulado"],mode="lines",fill="tozeroy",name="Balance",line=dict(width=3,color="#B5EAD7"),fillcolor="rgba(181,234,215,0.18)"))
+        cf.add_hline(y=0,line_dash="dash",line_color="#FFAAA5")
+        cf.update_layout(title="Evolución acumulada (unidades teóricas)",height=340,margin=dict(l=20,r=20,t=55,b=25),xaxis_title=None,yaxis_title="Unidades",hovermode="x unified")
+        st.plotly_chart(cf,width="stretch",key="cumulative-results")
+
+    export_hist=hist.copy()
+    export_summary=pd.DataFrame([{"Evaluadas":len(evaluated),"Ganadas":wins,"Perdidas":losses,"Empates":ties,"Pendientes":pending,"Accuracy":None if np.isnan(accuracy) else accuracy}])
+    notes=pd.DataFrame(columns=["Fecha","Par","Señal","Anotación personal","Qué observé","Seguimiento"])
+    output=BytesIO()
+    with pd.ExcelWriter(output,engine="openpyxl") as writer:
+        export_summary.to_excel(writer,index=False,sheet_name="Resumen")
+        if rows:
+            pd.DataFrame(rows).to_excel(writer,index=False,sheet_name="Por par")
+        export_hist.to_excel(writer,index=False,sheet_name="Señales")
+        notes.to_excel(writer,index=False,sheet_name="Notas")
+    st.download_button("📥 Descargar resultados en Excel",data=output.getvalue(),file_name=f"binary_5m_resultados_{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d_%H%M')}.xlsx",mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",width="stretch")
+    st.caption("El Excel es una copia para tus anotaciones; descargarlo no modifica ni reinicia el historial guardado en la aplicación.")
 
     last=hist.head(20).copy()
     last["Confianza"]=pd.to_numeric(last["confidence"],errors="coerce").map(lambda v:"—" if pd.isna(v) else f"{v:.1%}")
