@@ -7,7 +7,7 @@ from sklearn.ensemble import HistGradientBoostingClassifier
 from src.deriv_market import candles
 from src.binary5m import FEATURES, make_features
 
-MARKETS={"EUR/USD":"frxEURUSD","GBP/USD":"frxGBPUSD","USD/JPY":"frxUSDJPY","AUD/USD":"frxAUDUSD"}
+MARKETS={"EUR/USD":"frxEURUSD","GBP/USD":"frxGBPUSD","USD/JPY":"frxUSDJPY","AUD/USD":"frxAUDUSD","USD/CAD":"frxUSDCAD","USD/CHF":"frxUSDCHF","EUR/JPY":"frxEURJPY","GBP/JPY":"frxGBPJPY","EUR/GBP":"frxEURGBP","AUD/JPY":"frxAUDJPY"}
 DATA=Path("/data"); DATA.mkdir(parents=True,exist_ok=True)
 DB=DATA/"learning.db"; THRESHOLD=max(1/(1+.80)+.03,.58)
 STRATEGY_FIELDS=["breakout_up","breakout_down","retest_up","retest_down","support_bounce","resistance_bounce","ema_trend","ema_cross","rsi_support","rsi_resistance","rsi_bull_div","rsi_bear_div","bb_rsi_buy","bb_rsi_sell","trend_pullback","confluence"]
