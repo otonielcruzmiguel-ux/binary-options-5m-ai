@@ -7,10 +7,13 @@ from sklearn.ensemble import HistGradientBoostingClassifier
 from src.deriv_market import candles
 from src.history_store import upsert, load, count
 from src.binary5m import FEATURES, make_features
+from src.investing_calendar import refresh as refresh_news, block as news_block
 
 MARKETS={"EUR/USD":"frxEURUSD","GBP/USD":"frxGBPUSD","USD/JPY":"frxUSDJPY","AUD/USD":"frxAUDUSD","USD/CAD":"frxUSDCAD","USD/CHF":"frxUSDCHF","EUR/JPY":"frxEURJPY","GBP/JPY":"frxGBPJPY","EUR/GBP":"frxEURGBP","AUD/JPY":"frxAUDJPY"}
 DATA=Path("/data"); DATA.mkdir(parents=True,exist_ok=True)
 DB=DATA/"learning.db"; THRESHOLD=max(1/(1+.80)+.03,.58)
+NEWS_REFRESH_SECONDS=900
+_last_news_refresh=0
 STRATEGY_FIELDS=["breakout_up","breakout_down","retest_up","retest_down","support_bounce","resistance_bounce","ema_trend","ema_cross","rsi_support","rsi_resistance","rsi_bull_div","rsi_bear_div","bb_rsi_buy","bb_rsi_sell","trend_pullback","confluence"]
 
 def connect():
@@ -85,7 +88,11 @@ def summarize(con,now):
     print(f"RESUMEN_8H evaluadas={len(vals)} ganadas={w} perdidas={l} empates={t} accuracy={'NA' if acc is None else f'{acc:.3f}'}",flush=True)
 
 async def cycle():
+    global _last_news_refresh
     con=connect(); now=pd.Timestamp.now(tz="UTC")
+    if time.time()-_last_news_refresh>=NEWS_REFRESH_SECONDS:
+        news=refresh_news(); _last_news_refresh=time.time()
+        print(f"NOTICIAS Investing.com: {'actualizadas '+str(len(news)) if news is not None else 'no disponible; se conserva el último estado local'}",flush=True)
     for market,symbol in MARKETS.items():
         try:
             # Deriv solo alimenta el almacén; entrenamiento y evaluación leen de /data.
@@ -114,8 +121,14 @@ async def cycle():
             p=float(payload["model"].predict_proba(feat[payload["features"]].iloc[[-1]])[0,1])
             live_threshold,live_n,live_acc=adaptive_threshold(con,market,now)
             decision="SUBE" if p>=live_threshold else ("BAJA" if p<=1-live_threshold else "NO OPERAR")
+            base,quote=market.split("/")
+            blocked,news_reason,news_event=news_block(now,(base,quote),before=15,after=30)
+            if blocked:
+                decision="NO OPERAR"
+                print(f"NO_OPERAR_NOTICIA market={market} motivo={news_reason}",flush=True)
             if decision!="NO OPERAR":
-                con.execute("INSERT OR IGNORE INTO signals(market,bucket,expires,decision,entry,exit,confidence,result,context) VALUES(?,?,?,?,?,?,?,?,?)",(market,bucket.isoformat(),(bucket+pd.Timedelta(minutes=5)).isoformat(),decision,float(raw.iloc[-1].close),None,max(p,1-p),"PENDIENTE",context_of(latest)))
+                ctx=json.loads(context_of(latest)); ctx["news_status"]="CLEAR"; ctx["news_source"]="Investing.com"; ctx=json.dumps(ctx,separators=(",",":"))
+                con.execute("INSERT OR IGNORE INTO signals(market,bucket,expires,decision,entry,exit,confidence,result,context) VALUES(?,?,?,?,?,?,?,?,?)",(market,bucket.isoformat(),(bucket+pd.Timedelta(minutes=5)).isoformat(),decision,float(raw.iloc[-1].close),None,max(p,1-p),"PENDIENTE",ctx))
             for m,b,e,d,entry,ctx in con.execute("SELECT market,bucket,expires,decision,entry,context FROM signals WHERE market=? AND result='PENDIENTE'",(market,)).fetchall():
                 exp=pd.Timestamp(e)
                 if now>=exp:
