@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from src.deriv_market import candles
 from src.binary5m import FEATURES, make_features
+from sklearn.ensemble import HistGradientBoostingClassifier
 
 st.set_page_config(page_title="Binary 5M AI | Señales",page_icon="📈",layout="wide")
 MARKETS={"EUR/USD":"frxEURUSD","GBP/USD":"frxGBPUSD","USD/JPY":"frxUSDJPY","AUD/USD":"frxAUDUSD","USD/CAD":"frxUSDCAD","USD/CHF":"frxUSDCHF","EUR/JPY":"frxEURJPY","GBP/JPY":"frxGBPJPY","EUR/GBP":"frxEURGBP","AUD/JPY":"frxAUDJPY"}
@@ -30,11 +31,22 @@ with st.sidebar:
 
 symbol=MARKETS[market]
 
-@st.cache_data(ttl=2,show_spinner=False)
+@st.cache_resource(show_spinner=False)
+def fallback_model(sym):
+    raw=asyncio.run(candles(sym,count=3000,granularity=60))
+    d=make_features(raw,5,True).dropna(subset=FEATURES+["target"])
+    if len(d)<500:
+        return None
+    model=HistGradientBoostingClassifier(max_iter=250,learning_rate=.05,max_leaf_nodes=15,l2_regularization=1.0,random_state=42)
+    model.fit(d[FEATURES],d["target"].astype(int))
+    return {"model":model,"features":FEATURES,"threshold":max(1/(1+.80)+.03,.58),"payout":.80}
+
+
+@st.cache_data(ttl=5,show_spinner=False)
 def market_data(sym,count):
     return asyncio.run(candles(sym,count=count,granularity=60))
 
-@st.fragment(run_every="2s")
+@st.fragment(run_every="1s")
 def user_panel():
     try:
         raw=market_data(symbol,max(bars,250))
@@ -48,6 +60,8 @@ def user_panel():
         path=Path(f"/data/model_{symbol}.joblib")
         if path.exists():
             payload=joblib.load(path)
+        if payload is None:
+            payload=fallback_model(symbol)
 
         decision="ESPERANDO"
         confidence=None
@@ -71,7 +85,7 @@ def user_panel():
         fig=go.Figure(data=[go.Candlestick(x=chart["timestamp"],open=chart["open"],high=chart["high"],low=chart["low"],close=chart["close"])])
         fig.update_layout(height=480,margin=dict(l=10,r=10,t=30,b=10),xaxis_rangeslider_visible=False,title=f"{market} · 1 minuto")
         st.plotly_chart(fig,width="stretch",config={"displayModeBar":False})
-        st.caption("La señal es una estimación del modelo y no garantiza el resultado. Esta vista no ejecuta operaciones.")
+        st.caption("La señal es una estimación del modelo y no garantiza el resultado. Esta vista no ejecuta operaciones. El reloj se actualiza cada segundo; las velas se consultan cada pocos segundos para reducir latencia y carga.")
     except Exception as e:
         st.warning(f"Mercado temporalmente no disponible: {e}")
 
