@@ -1,4 +1,8 @@
 import asyncio
+import json
+import os
+import urllib.parse
+import urllib.request
 from pathlib import Path
 import joblib
 import pandas as pd
@@ -6,7 +10,6 @@ import plotly.graph_objects as go
 import streamlit as st
 from src.deriv_market import candles
 from src.binary5m import FEATURES, make_features
-from sklearn.ensemble import HistGradientBoostingClassifier
 
 st.set_page_config(page_title="Binary 5M AI | Señales",page_icon="📈",layout="wide")
 MARKETS={"EUR/USD":"frxEURUSD","GBP/USD":"frxGBPUSD","USD/JPY":"frxUSDJPY","AUD/USD":"frxAUDUSD","USD/CAD":"frxUSDCAD","USD/CHF":"frxUSDCHF","EUR/JPY":"frxEURJPY","GBP/JPY":"frxGBPJPY","EUR/GBP":"frxEURGBP","AUD/JPY":"frxAUDJPY"}
@@ -31,17 +34,6 @@ with st.sidebar:
 
 symbol=MARKETS[market]
 
-@st.cache_resource(show_spinner=False)
-def fallback_model(sym):
-    raw=asyncio.run(candles(sym,count=3000,granularity=60))
-    d=make_features(raw,5,True).dropna(subset=FEATURES+["target"])
-    if len(d)<500:
-        return None
-    model=HistGradientBoostingClassifier(max_iter=250,learning_rate=.05,max_leaf_nodes=15,l2_regularization=1.0,random_state=42)
-    model.fit(d[FEATURES],d["target"].astype(int))
-    return {"model":model,"features":FEATURES,"threshold":max(1/(1+.80)+.03,.58),"payout":.80}
-
-
 @st.cache_data(ttl=5,show_spinner=False)
 def market_data(sym,count):
     return asyncio.run(candles(sym,count=count,granularity=60))
@@ -56,22 +48,16 @@ def user_panel():
         remaining=max(0,int((next_block-now).total_seconds()))
         mm,ss=divmod(remaining,60)
 
-        payload=None
-        path=Path(f"/data/model_{symbol}.joblib")
-        if path.exists():
-            payload=joblib.load(path)
-        if payload is None:
-            payload=fallback_model(symbol)
-
-        decision="ESPERANDO"
-        confidence=None
-        if payload:
-            feat=make_features(raw,5,False).dropna(subset=FEATURES)
-            if not feat.empty:
-                p=float(payload["model"].predict_proba(feat[payload["features"]].iloc[[-1]])[0,1])
-                th=float(payload.get("threshold",.59))
-                decision="SUBE" if p>=th else ("BAJA" if p<=1-th else "NO OPERAR")
-                confidence=max(p,1-p)
+        decision="ESPERANDO"; confidence=None
+        try:
+            base=os.environ.get("SIGNAL_API_URL","http://binary-options-5m-ai.railway.internal:8090")
+            url=base+"/signal/"+urllib.parse.quote(market,safe="")
+            with urllib.request.urlopen(url,timeout=3) as resp:
+                sig=json.loads(resp.read().decode())
+            decision=sig.get("decision","ESPERANDO")
+            confidence=sig.get("confidence")
+        except Exception:
+            pass
 
         a,b,c=st.columns(3)
         a.metric("Par",market)
@@ -79,7 +65,7 @@ def user_panel():
         c.metric("Próximo bloque",f"{mm:02d}:{ss:02d}")
 
         icon={"SUBE":"⬆️","BAJA":"⬇️","NO OPERAR":"⏸️","ESPERANDO":"⌛"}.get(decision,"")
-        st.markdown(f'<div class="signal-card"><div>SEÑAL ACTUAL</div><h1>{icon} {decision}</h1><div>{"Confianza "+format(confidence,".1%") if confidence is not None else "Preparando modelo..."}</div></div>',unsafe_allow_html=True)
+        st.markdown(f'<div class="signal-card"><div>SEÑAL ACTUAL</div><h1>{icon} {decision}</h1><div>{"Confianza "+format(confidence,".1%") if confidence is not None else "Sincronizando con aprendizaje 24/7..."}</div></div>',unsafe_allow_html=True)
 
         chart=raw.tail(bars)
         fig=go.Figure(data=[go.Candlestick(x=chart["timestamp"],open=chart["open"],high=chart["high"],low=chart["low"],close=chart["close"])])
