@@ -14,12 +14,11 @@ from src.binary5m import FEATURES, make_features, news_block, rsi
 
 st.set_page_config(page_title="Binary 5M AI | Deriv", page_icon="📈", layout="wide")
 st.markdown("""<style>
-.block-container{padding-top:1.35rem;max-width:1500px}.exec-title{font-size:2rem;font-weight:800;letter-spacing:-.04em;margin-bottom:.15rem}.exec-sub{opacity:.7;margin-bottom:1rem}
+.block-container{padding-top:3.25rem!important;max-width:1500px}.exec-title{font-size:2rem;font-weight:800;line-height:1.25;letter-spacing:-.035em;margin:0 0 .35rem 0;padding-top:.2rem}.exec-sub{opacity:.7;margin-bottom:1rem}
 [data-testid="stMetric"]{background:rgba(127,127,127,.06);border:1px solid rgba(127,127,127,.15);padding:14px 16px;border-radius:16px}
 .signal-card{padding:20px 24px;border-radius:18px;border:1px solid rgba(127,127,127,.18);background:rgba(127,127,127,.055);margin:.4rem 0 1rem}.signal-big{font-size:2.25rem;font-weight:850;letter-spacing:-.04em}.muted{opacity:.68}
 </style>""",unsafe_allow_html=True)
-st.markdown('<div class="exec-title">Binary 5M · Centro de decisión</div>',unsafe_allow_html=True)
-st.markdown('<div class="exec-sub">Investigación en vivo · horizonte 5 minutos · sin ejecución automática de operaciones</div>',unsafe_allow_html=True)
+
 
 MARKETS={"EUR/USD":("frxEURUSD","EURUSD"),"GBP/USD":("frxGBPUSD","GBPUSD"),"USD/JPY":("frxUSDJPY","USDJPY"),"AUD/USD":("frxAUDUSD","AUDUSD"),"USD/CAD":("frxUSDCAD","USDCAD"),"USD/CHF":("frxUSDCHF","USDCHF"),"EUR/JPY":("frxEURJPY","EURJPY"),"GBP/JPY":("frxGBPJPY","GBPJPY"),"EUR/GBP":("frxEURGBP","EURGBP"),"AUD/JPY":("frxAUDJPY","AUDJPY")}
 
@@ -67,6 +66,10 @@ with st.sidebar:
     st.subheader("Entrenamiento automático")
     train_count=st.select_slider("Velas para entrenar",options=[1000,2000,3000,5000,10000,25000,50000,100000],value=100000)
     st.caption("El modelo se entrena automáticamente al abrir o al cambiar de activo.")
+
+exec_horizon=horizon if page in ("🎯 Ejecutivo","📊 Resultados") else "5 minutos"
+st.markdown(f'<div class="exec-title">Binary {("1M" if exec_horizon=="1 minuto" else "5M")} · Centro de decisión</div>',unsafe_allow_html=True)
+st.markdown(f'<div class="exec-sub">Investigación en vivo · horizonte {exec_horizon} · sin ejecución automática de operaciones</div>',unsafe_allow_html=True)
 
 symbol,pair=MARKETS[market]
 
