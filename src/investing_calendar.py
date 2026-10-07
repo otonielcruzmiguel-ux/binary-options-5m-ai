@@ -43,6 +43,10 @@ def refresh():
             ts=ts.tz_convert("UTC")
             rows.append({"timestamp":ts.isoformat(),"currency":currency,"impact":"HIGH","event":event.get_text(" ",strip=True) if event else "Evento económico","source":"Investing.com"})
         out=pd.DataFrame(rows).drop_duplicates(subset=["timestamp","currency","event"]) if rows else pd.DataFrame(columns=["timestamp","currency","impact","event","source"])
+        # Cero filas no se interpreta como "no hay noticias": suele significar HTML dinámico/bloqueo.
+        if out.empty:
+            _status(ok=False,updated_at=pd.Timestamp.now(tz="UTC").isoformat(),events=0,error="La página no entregó eventos parseables; se conserva el último calendario válido.",source=URL)
+            return None
         out.to_csv(CACHE,index=False)
         _status(ok=True,updated_at=pd.Timestamp.now(tz="UTC").isoformat(),events=int(len(out)),source=URL)
         return out
