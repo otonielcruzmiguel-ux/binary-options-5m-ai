@@ -5,6 +5,7 @@ import numpy as np
 from sklearn.metrics import accuracy_score
 from sklearn.ensemble import HistGradientBoostingClassifier
 from src.deriv_market import candles
+from src.history_store import upsert, load, count
 from src.binary5m import FEATURES, make_features
 
 MARKETS={"EUR/USD":"frxEURUSD","GBP/USD":"frxGBPUSD","USD/JPY":"frxUSDJPY","AUD/USD":"frxAUDUSD","USD/CAD":"frxUSDCAD","USD/CHF":"frxUSDCHF","EUR/JPY":"frxEURJPY","GBP/JPY":"frxGBPJPY","EUR/GBP":"frxEURGBP","AUD/JPY":"frxAUDJPY"}
@@ -68,7 +69,13 @@ async def cycle():
     con=connect(); now=pd.Timestamp.now(tz="UTC")
     for market,symbol in MARKETS.items():
         try:
-            raw=await candles(symbol,count=5000,granularity=60)
+            # Deriv solo alimenta el almacén; entrenamiento y evaluación leen de /data.
+            have=count(symbol)
+            fetch_n=10000 if have<10000 else 120
+            fresh=await candles(symbol,count=fetch_n,granularity=60)
+            upsert(symbol,fresh)
+            raw=load(symbol,100000)
+            if raw.empty: continue
             path=DATA/f"model_{symbol}.joblib"; meta=DATA/f"model_{symbol}.json"
             retrain=not path.exists()
             if meta.exists():
