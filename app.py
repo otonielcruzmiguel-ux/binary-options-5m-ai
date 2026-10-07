@@ -52,7 +52,7 @@ with st.sidebar:
         get_market_data.clear()
     st.divider()
     st.subheader("Entrenamiento automático")
-    train_count=st.select_slider("Velas para entrenar",options=[1000,2000,3000,5000],value=5000)
+    train_count=st.select_slider("Velas para entrenar",options=[1000,2000,3000,5000,10000,25000,50000,100000],value=100000)
     st.caption("El modelo se entrena automáticamente al abrir o al cambiar de activo.")
 
 symbol,pair=MARKETS[market]
