@@ -174,6 +174,35 @@ def persistent_learning_panel():
             st.dataframe(summaries.rename(columns={"period":"Periodo UTC","evaluated":"Evaluadas","wins":"Ganadas","losses":"Perdidas","ties":"Empates","accuracy":"Accuracy"}),width="stretch",hide_index=True)
     except Exception:
         pass
+    decided=hist[hist["result"].isin(["GANADA","PERDIDA"])].copy()
+    if not decided.empty:
+        decided["Hora UTC"]=pd.to_datetime(decided["bucket"],utc=True,errors="coerce").dt.hour
+        perf=[]
+        for (pair,hour),g in decided.groupby(["market","Hora UTC"]):
+            w=int((g["result"]=="GANADA").sum()); n=len(g)
+            perf.append({"Par":pair,"Hora UTC":int(hour),"Muestra":n,"Ganadas":w,"Perdidas":n-w,"Accuracy":w/n})
+        perf=pd.DataFrame(perf).sort_values(["Accuracy","Muestra"],ascending=[False,False])
+        perf["Estado"]=perf.apply(lambda r:"Muestra pequeña" if r["Muestra"]<30 else ("Evitar/elevar umbral" if r["Accuracy"]<.56 else "Válido"),axis=1)
+        perf["Accuracy"]=perf["Accuracy"].map(lambda v:f"{v:.1%}")
+        with st.expander("🕒 Rendimiento por par y hora"):
+            st.dataframe(perf.head(40),width="stretch",hide_index=True)
+            st.caption("El filtro adaptativo solo usa rendimiento forward con al menos 30 resultados; una pérdida aislada no modifica el modelo.")
+
+    model_rows=[]
+    for pair,(sym,_) in MARKETS.items():
+        meta_path=Path(f"/data/model_{sym}.json")
+        if meta_path.exists():
+            try:
+                md=json.loads(meta_path.read_text())
+                va=md.get("validation_accuracy"); vs=md.get("validation_signals",0)
+                model_rows.append({"Par":pair,"Último entrenamiento":md.get("trained_at","—"),"Señales validación":vs,"Accuracy walk-forward":("—" if va is None else f"{va:.1%}")})
+            except Exception:
+                pass
+    if model_rows:
+        with st.expander("🧪 Validación walk-forward"):
+            st.dataframe(pd.DataFrame(model_rows),width="stretch",hide_index=True)
+            st.caption("La validación usa el 30% cronológicamente posterior antes de ajustar el modelo de producción con todo el histórico.")
+
     failures=hist[hist["result"]=="PERDIDA"].head(10)
     if not failures.empty:
         with st.expander("🔎 Diagnóstico de los últimos fallos"):
