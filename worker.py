@@ -11,7 +11,7 @@ from src.investing_calendar import refresh as refresh_news, block as news_block
 
 MARKETS={"EUR/USD":"frxEURUSD","GBP/USD":"frxGBPUSD","USD/JPY":"frxUSDJPY","AUD/USD":"frxAUDUSD","USD/CAD":"frxUSDCAD","USD/CHF":"frxUSDCHF","EUR/JPY":"frxEURJPY","GBP/JPY":"frxGBPJPY","EUR/GBP":"frxEURGBP","AUD/JPY":"frxAUDJPY"}
 DATA=Path("/data"); DATA.mkdir(parents=True,exist_ok=True)
-DB=DATA/"learning.db"; THRESHOLD=max(1/(1+.80)+.03,.58)
+DB=DATA/"learning.db"; PAYOUT=.80; BREAK_EVEN=1/(1+PAYOUT); THRESHOLD=max(BREAK_EVEN+.03,.58)
 NEWS_REFRESH_SECONDS=900
 _last_news_refresh=0
 STRATEGY_FIELDS=["breakout_up","breakout_down","retest_up","retest_down","support_bounce","resistance_bounce","ema_trend","ema_cross","rsi_support","rsi_resistance","rsi_bull_div","rsi_bear_div","bb_rsi_buy","bb_rsi_sell","trend_pullback","confluence"]
@@ -27,6 +27,42 @@ def connect():
       accuracy REAL, change_type TEXT, detail TEXT)""")
     c.commit(); return c
 
+def directional_quality(row,decision):
+    # Familias independientes: tendencia, estructura, momentum/extremos y confluencia.
+    bullish=[
+        row.get("ema_trend",0)>0 or row.get("trend_pullback",0)>0,
+        row.get("breakout_up",0)>0 or row.get("retest_up",0)>0 or row.get("support_bounce",0)>0,
+        row.get("rsi_support",0)>0 or row.get("rsi_bull_div",0)>0 or row.get("bb_rsi_buy",0)>0,
+        row.get("confluence",0)>=.125,
+    ]
+    bearish=[
+        row.get("ema_trend",0)<0 or row.get("trend_pullback",0)<0,
+        row.get("breakout_down",0)>0 or row.get("retest_down",0)>0 or row.get("resistance_bounce",0)>0,
+        row.get("rsi_resistance",0)>0 or row.get("rsi_bear_div",0)>0 or row.get("bb_rsi_sell",0)>0,
+        row.get("confluence",0)<=-.125,
+    ]
+    votes=sum(bullish if decision=="SUBE" else bearish)
+    opposite=sum(bearish if decision=="SUBE" else bullish)
+    return votes,opposite
+
+def walk_forward_score(d):
+    # Tres cortes temporales expansivos: cada prueba ocurre después de su entrenamiento.
+    scores=[]; counts=[]
+    n=len(d)
+    for frac in (.55,.65,.75):
+        cut=int(n*frac); end=min(n,cut+max(200,int(n*.10)))
+        tr=d.iloc[:cut]; te=d.iloc[cut:end]
+        if len(tr)<500 or len(te)<100: continue
+        m=HistGradientBoostingClassifier(max_iter=250,learning_rate=.05,max_leaf_nodes=15,l2_regularization=1.0,random_state=42)
+        m.fit(tr[FEATURES],tr["target"].astype(int))
+        p=m.predict_proba(te[FEATURES])[:,1]; y=te["target"].astype(int).to_numpy()
+        take=(p>=THRESHOLD)|(p<=1-THRESHOLD)
+        if take.sum()>=30:
+            pred=(p>=.5).astype(int)
+            scores.append(float((pred[take]==y[take]).mean())); counts.append(int(take.sum()))
+    if not scores: return None,0
+    return float(np.average(scores,weights=counts)),sum(counts)
+
 def train(raw):
     d=make_features(raw,5,True).dropna(subset=FEATURES+["target"])
     if len(d)<500: return None
@@ -40,7 +76,8 @@ def train(raw):
     # Producción se ajusta con todo el histórico solo después de medir el tramo futuro.
     m=HistGradientBoostingClassifier(max_iter=250,learning_rate=.05,max_leaf_nodes=15,l2_regularization=1.0,random_state=42)
     m.fit(d[FEATURES],d["target"].astype(int))
-    return {"model":m,"features":FEATURES,"threshold":THRESHOLD,"payout":.80,"trained_at":pd.Timestamp.now(tz="UTC").isoformat(),"validation_accuracy":signal_acc,"validation_signals":signals}
+    wf_acc,wf_signals=walk_forward_score(d)
+    return {"model":m,"features":FEATURES,"threshold":THRESHOLD,"payout":PAYOUT,"trained_at":pd.Timestamp.now(tz="UTC").isoformat(),"validation_accuracy":signal_acc,"validation_signals":signals,"walk_forward_accuracy":wf_acc,"walk_forward_signals":wf_signals}
 
 def adaptive_threshold(con,market,now):
     # Solo adapta con muestra forward suficiente; nunca por una pérdida aislada.
@@ -52,6 +89,26 @@ def adaptive_threshold(con,market,now):
     # Si el rendimiento reciente cae, exige más confianza; si es sólido, relaja muy poco.
     adj=.03 if acc<.56 else (.015 if acc<.60 else (-.005 if acc>=.66 and n>=60 else 0))
     return min(.68,max(THRESHOLD,THRESHOLD+adj)),n,acc
+
+def hour_quality(con,market,now):
+    # Sólo bloquea una franja cuando ya existe muestra forward razonable en esa misma hora UTC.
+    hour=now.hour
+    since=(now-pd.Timedelta(days=30)).isoformat()
+    rows=con.execute("SELECT bucket,result FROM signals WHERE market=? AND bucket>=? AND result IN ('GANADA','PERDIDA')",(market,since)).fetchall()
+    vals=[r for r in rows if pd.Timestamp(r[0]).hour==hour]
+    n=len(vals)
+    if n<40: return True,n,None
+    acc=sum(r[1]=="GANADA" for r in vals)/n
+    return acc>=.54,n,acc
+
+def promote_candidate(current,candidate):
+    # Evita sustituir un modelo sólo porque acaba de entrenarse.
+    if current is None: return True,"primer modelo"
+    ca=candidate.get("walk_forward_accuracy"); cn=candidate.get("walk_forward_signals",0)
+    oa=current.get("walk_forward_accuracy",current.get("validation_accuracy"))
+    if ca is None or cn<90: return False,"candidato sin muestra walk-forward suficiente"
+    if oa is None: return ca>=BREAK_EVEN+.02,"comparación contra equilibrio"
+    return ca>=max(BREAK_EVEN+.02,float(oa)+.005),f"walk-forward candidato={ca:.3f} actual={float(oa):.3f}"
 
 def hourly_evolution(con,now):
     period=now.floor("1h").isoformat()
@@ -108,11 +165,18 @@ async def cycle():
                 try: retrain=(now-pd.Timestamp(json.loads(meta.read_text())["trained_at"])).total_seconds()>=1800
                 except Exception: retrain=True
             if retrain:
-                payload=train(raw)
-                if payload:
-                    tmp=DATA/f"model_{symbol}.tmp"; joblib.dump(payload,tmp); tmp.replace(path)
-                    meta.write_text(json.dumps({"trained_at":payload["trained_at"],"validation_accuracy":payload.get("validation_accuracy"),"validation_signals":payload.get("validation_signals")}))
-                    print(f"{market}: modelo reentrenado",flush=True)
+                candidate=train(raw)
+                if candidate:
+                    current=joblib.load(path) if path.exists() else None
+                    promote,why=promote_candidate(current,candidate)
+                    if promote:
+                        tmp=DATA/f"model_{symbol}.tmp"; joblib.dump(candidate,tmp); tmp.replace(path)
+                        meta.write_text(json.dumps({"trained_at":candidate["trained_at"],"validation_accuracy":candidate.get("validation_accuracy"),"validation_signals":candidate.get("validation_signals"),"walk_forward_accuracy":candidate.get("walk_forward_accuracy"),"walk_forward_signals":candidate.get("walk_forward_signals"),"promotion":why}))
+                        print(f"{market}: modelo promovido · {why}",flush=True)
+                    else:
+                        # Avanza el reloj de evaluación sin reemplazar el modelo vigente.
+                        meta.write_text(json.dumps({"trained_at":candidate["trained_at"],"validation_accuracy":current.get("validation_accuracy") if current else None,"validation_signals":current.get("validation_signals") if current else None,"walk_forward_accuracy":current.get("walk_forward_accuracy") if current else None,"walk_forward_signals":current.get("walk_forward_signals") if current else None,"candidate_rejected":why}))
+                        print(f"{market}: candidato rechazado · {why}",flush=True)
             if not path.exists(): continue
             payload=joblib.load(path)
             feat=make_features(raw,5,False).dropna(subset=FEATURES)
@@ -121,13 +185,22 @@ async def cycle():
             p=float(payload["model"].predict_proba(feat[payload["features"]].iloc[[-1]])[0,1])
             live_threshold,live_n,live_acc=adaptive_threshold(con,market,now)
             decision="SUBE" if p>=live_threshold else ("BAJA" if p<=1-live_threshold else "NO OPERAR")
+            gate_reason="modelo"
+            if decision!="NO OPERAR":
+                votes,opposite=directional_quality(latest,decision)
+                if votes<2 or opposite>=2:
+                    decision="NO OPERAR"; gate_reason=f"confluencia insuficiente votes={votes} opposite={opposite}"
+            hour_ok,hour_n,hour_acc=hour_quality(con,market,now)
+            if decision!="NO OPERAR" and not hour_ok:
+                decision="NO OPERAR"; gate_reason=f"horario débil n={hour_n} acc={hour_acc:.3f}"
+            # El filtro por par ya eleva el umbral con muestra forward reciente.
             base,quote=market.split("/")
             blocked,news_reason,news_event=news_block(now,(base,quote),before=15,after=30)
             if blocked:
-                decision="NO OPERAR"
+                decision="NO OPERAR"; gate_reason=news_reason
                 print(f"NO_OPERAR_NOTICIA market={market} motivo={news_reason}",flush=True)
             if decision!="NO OPERAR":
-                ctx=json.loads(context_of(latest)); ctx["news_status"]="CLEAR"; ctx["news_source"]="Investing.com"; ctx=json.dumps(ctx,separators=(",",":"))
+                ctx=json.loads(context_of(latest)); ctx["news_status"]="CLEAR"; ctx["news_source"]="Investing.com"; ctx["quality_gate"]="PASS"; ctx["pair_sample"]=live_n; ctx["pair_accuracy"]=live_acc; ctx["hour_sample"]=hour_n; ctx["hour_accuracy"]=hour_acc; ctx=json.dumps(ctx,separators=(",",":"))
                 con.execute("INSERT OR IGNORE INTO signals(market,bucket,expires,decision,entry,exit,confidence,result,context) VALUES(?,?,?,?,?,?,?,?,?)",(market,bucket.isoformat(),(bucket+pd.Timedelta(minutes=5)).isoformat(),decision,float(raw.iloc[-1].close),None,max(p,1-p),"PENDIENTE",ctx))
             for m,b,e,d,entry,ctx in con.execute("SELECT market,bucket,expires,decision,entry,context FROM signals WHERE market=? AND result='PENDIENTE'",(market,)).fetchall():
                 exp=pd.Timestamp(e)
