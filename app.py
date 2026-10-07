@@ -44,7 +44,7 @@ with st.sidebar:
     page=st.radio("Sección",["📈 Mercado","📊 Resultados","🧠 Sistema 24/7","📝 Evolución"],index=0)
     st.divider()
     st.header("Configuración")
-    market=st.selectbox("Activo",list(MARKETS),index=0,help="El panel se enfoca en un solo activo a la vez.")
+    market=st.selectbox("Activo",list(MARKETS),index=0,key="market_selector",help="Al abrir Mercado se selecciona automáticamente el mejor par operable; puedes cambiarlo manualmente.")
     bars=st.slider("Velas visibles",50,300,120,10)
     st.write("Temporalidad: **1 minuto**")
     st.write("Horizonte: **5 minutos**")
@@ -84,7 +84,17 @@ def rank_markets(count):
     return pd.DataFrame(rows).sort_values("Score",ascending=False) if rows else pd.DataFrame()
 
 if page=="📈 Mercado":
-  with st.expander("🏆 Mejor par para operar ahora",expanded=True):
+  ranking=rank_markets(min(train_count,3000))
+  operables=ranking[ranking["Señal"]!="NO OPERAR"] if not ranking.empty else ranking
+  if not operables.empty:
+      best=operables.iloc[0]
+      best_market=str(best["Par"])
+      if not st.session_state.get("auto_best_selected"):
+          st.session_state["auto_best_selected"]=True
+          if st.session_state.get("market_selector") != best_market:
+              st.session_state["market_selector"]=best_market
+              st.rerun()
+  with st.expander("🏆 Selección automática",expanded=False):
       ranking=rank_markets(min(train_count,3000))
       operables=ranking[ranking["Señal"]!="NO OPERAR"] if not ranking.empty else ranking
       if operables.empty:
@@ -102,6 +112,9 @@ if page=="📈 Mercado":
           st.dataframe(show[["Par","Señal","Confianza","Confluencia","Accuracy prueba"]],width="stretch",hide_index=True)
           st.caption("Ranking orientativo para el próximo horizonte de 5 minutos. Compara confianza, validación histórica y confluencia; no garantiza el resultado.")
   
+market=st.session_state.get("market_selector",market)
+symbol,pair=MARKETS[market]
+
 if page in ("📈 Mercado","🧠 Sistema 24/7"):
     auto_key=f"trained_{market}_{train_count}"
     if not st.session_state.get(auto_key):
