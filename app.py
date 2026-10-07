@@ -16,7 +16,7 @@ st.set_page_config(page_title="Binary 5M AI | Deriv", page_icon="📈", layout="
 st.title("Binary 5M AI — Deriv")
 st.caption("Dashboard de investigación. Datos públicos de Deriv. No ejecuta operaciones.")
 
-MARKETS={"EUR/USD":("frxEURUSD","EURUSD"),"GBP/USD":("frxGBPUSD","GBPUSD"),"USD/JPY":("frxUSDJPY","USDJPY"),"AUD/USD":("frxAUDUSD","AUDUSD")}
+MARKETS={"EUR/USD":("frxEURUSD","EURUSD"),"GBP/USD":("frxGBPUSD","GBPUSD"),"USD/JPY":("frxUSDJPY","USDJPY"),"AUD/USD":("frxAUDUSD","AUDUSD"),"USD/CAD":("frxUSDCAD","USDCAD"),"USD/CHF":("frxUSDCHF","USDCHF"),"EUR/JPY":("frxEURJPY","EURJPY"),"GBP/JPY":("frxGBPJPY","GBPJPY"),"EUR/GBP":("frxEURGBP","EURGBP"),"AUD/JPY":("frxAUDJPY","AUDJPY")}
 
 @st.cache_data(ttl=1,show_spinner=False)
 def get_market_data(symbol,count):
