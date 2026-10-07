@@ -221,9 +221,12 @@ def persistent_learning_panel():
         st.markdown("### Rendimiento por par")
         visual=by_pair.dropna(subset=["Accuracy"]).sort_values("Accuracy",ascending=True)
         if not visual.empty:
-            pf=go.Figure(go.Bar(x=visual["Accuracy"]*100,y=visual["Par"],orientation="h",text=visual["Accuracy"].map(lambda v:f"{v:.1%}"),textposition="outside",marker=dict(color=["#FF1744","#FF9100","#FFD600","#00E676","#00B8D4","#2979FF","#7C4DFF","#F500A5","#00C853","#651FFF"][:len(visual)]),hovertemplate="%{y}: %{x:.1f}%<extra></extra>"))
-            pf.add_vline(x=55.6,line_dash="dash",line_color="#FF1744",annotation_text="Referencia 55.6%")
-            pf.update_layout(title="Comparación de pares",height=max(360,55*len(visual)),margin=dict(l=20,r=70,t=55,b=35),xaxis=dict(title="Acierto %",range=[0,100]),yaxis_title=None,showlegend=False)
+            visual=visual.sort_values("Accuracy",ascending=False)
+            palette=["#00E676","#00B8D4","#2979FF","#7C4DFF","#F500A5","#FFD600","#FF9100","#00C853","#651FFF","#FF1744"]
+            pf=go.Figure()
+            pf.add_trace(go.Scatter(x=visual["Par"],y=visual["Accuracy"]*100,mode="lines+markers+text",text=visual["Accuracy"].map(lambda v:f"{v:.1%}"),textposition="top center",line=dict(width=4,color="#00B8D4"),marker=dict(size=12,color=palette[:len(visual)],line=dict(width=2,color="#111827")),hovertemplate="%{x}: %{y:.1f}%<extra></extra>"))
+            pf.add_hline(y=55.6,line_dash="dash",line_color="#FF1744",annotation_text="Referencia 55.6%")
+            pf.update_layout(title="Rendimiento por par",height=420,margin=dict(l=20,r=30,t=60,b=55),xaxis_title=None,yaxis=dict(title="Acierto %",range=[0,100]),showlegend=False,hovermode="x")
             st.plotly_chart(pf,width="stretch",key="pair-performance")
         by_pair["Indicador"]=by_pair.apply(lambda r:"⚪ Poca muestra" if (r["Ganadas"]+r["Perdidas"])<30 else ("🟢 Fuerte" if r["Accuracy"]>=.62 else ("🟡 Vigilar" if r["Accuracy"]>=.56 else "🔴 Débil")),axis=1)
         by_pair["Accuracy"]=by_pair["Accuracy"].map(lambda v:"—" if pd.isna(v) else f"{v:.1%}")
