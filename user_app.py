@@ -34,8 +34,10 @@ with st.sidebar:
 
 symbol=MARKETS[market]
 
-@st.cache_data(ttl=3,show_spinner=False)
+@st.cache_data(ttl=5,show_spinner=False)
 def market_data(sym,count):
+    # El gráfico usa la API privada para la señal; mantenemos esta lectura temporal
+    # hasta exponer velas locales por la misma API.
     return asyncio.run(candles(sym,count=count,granularity=60))
 
 @st.fragment(run_every="0.5s")
