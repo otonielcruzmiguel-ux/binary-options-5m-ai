@@ -41,7 +41,7 @@ def fit_model(raw,payout=.80):
 
 with st.sidebar:
     st.header("Navegación")
-    page=st.radio("Sección",["📈 Mercado","📊 Resultados","🧠 Sistema 24/7"],index=0)
+    page=st.radio("Sección",["📈 Mercado","📊 Resultados","🧠 Sistema 24/7","📝 Evolución"],index=0)
     st.divider()
     st.header("Configuración")
     market=st.selectbox("Activo",list(MARKETS),index=0,help="El panel se enfoca en un solo activo a la vez.")
@@ -223,6 +223,27 @@ def persistent_learning_panel():
 
 if page=="📊 Resultados":
     persistent_learning_panel()
+
+if page=="📝 Evolución":
+    st.subheader("📝 Bitácora de evolución")
+    st.caption("Qué evaluó el sistema cada hora y qué decisión tomó. No muestra cambios ficticios: si no hubo una modificación real, lo indica.")
+    db_path=Path("/data/learning.db")
+    if db_path.exists():
+        try:
+            import sqlite3
+            con=sqlite3.connect(f"file:{db_path}?mode=ro",uri=True,timeout=2)
+            evo=pd.read_sql_query("SELECT period,created,evaluated,wins,losses,accuracy,change_type,detail FROM evolution ORDER BY period DESC LIMIT 168",con)
+            con.close()
+            if evo.empty:
+                st.info("La bitácora comenzará a llenarse al cerrar el próximo bloque horario.")
+            else:
+                evo["accuracy"]=evo["accuracy"].map(lambda v:"—" if pd.isna(v) else f"{v:.1%}")
+                st.dataframe(evo.rename(columns={"period":"Hora UTC","evaluated":"Evaluadas","wins":"Ganadas","losses":"Perdidas","accuracy":"Accuracy","change_type":"Tipo","detail":"Qué hizo / por qué"}),width="stretch",hide_index=True)
+        except Exception as e:
+            st.info(f"La bitácora se está inicializando: {e}")
+    else:
+        st.info("Esperando que el worker cree la bitácora persistente.")
+
 
 @st.fragment(run_every="2s")
 def live_panel():
