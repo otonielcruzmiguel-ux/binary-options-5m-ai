@@ -86,7 +86,7 @@ def rank_markets(count):
                 continue
             p=float(model_data["model"].predict_proba(feat[FEATURES].iloc[[-1]])[0,1])
             th=float(model_data["threshold"])
-            decision="SUBE" if p>=th else ("BAJA" if p<=1-th else "NO OPERAR")
+            decision=worker_decision(market,1)
             confidence=max(p,1-p)
             conf=float(feat.iloc[-1].get("confluence",0.0))
             hist_acc=metrics["signal_accuracy"]
@@ -353,6 +353,15 @@ if page=="📝 Evolución":
 
 
 
+def worker_decision(market,horizon):
+    import sqlite3
+    try:
+        with sqlite3.connect("file:/data/learning.db?mode=ro",uri=True,timeout=2) as con:
+            rec=con.execute("SELECT decision,updated FROM live_decisions WHERE horizon=? AND market=?",(horizon,market)).fetchone()
+        if rec and (pd.Timestamp.now(tz="UTC")-pd.Timestamp(rec[1])).total_seconds()<=180: return rec[0]
+    except Exception: pass
+    return "NO OPERAR"
+
 def executive_1m():
     st.markdown("## ⚡ Ejecutivo 1M")
     st.caption("Estrategia experimental independiente · horizonte 1 minuto · modelo e historial separados de 5M")
@@ -472,13 +481,14 @@ def live_panel():
         if saved is None or saved.get("bucket") != signal_bucket:
             p=float(payload["model"].predict_proba(usable[payload["features"]].iloc[[-1]])[0,1])
             th=float(payload["threshold"])
-            decision="NO OPERAR" if blocked else ("SUBE" if p>=th else ("BAJA" if p<=1-th else "NO OPERAR"))
+            decision="NO OPERAR" if blocked else worker_decision(market,5)
             st.session_state[alert_key]={"bucket":signal_bucket,"decision":decision,"p":p,"confidence":max(p,1-p)}
             if decision in ("SUBE","BAJA") and not any(r["bucket"]==signal_bucket for r in history):
                 history.append({"bucket":signal_bucket,"expires":signal_bucket+pd.Timedelta(minutes=5),"decision":decision,"entry_price":float(latest.close),"exit_price":None,"confidence":max(p,1-p),"result":"PENDIENTE"})
                 if len(history)>200:
                     del history[:-200]
         saved=st.session_state[alert_key]
+        saved["decision"]="NO OPERAR" if blocked else worker_decision(market,5)
         sig=saved["decision"]
         quality="ALTA" if sig!="NO OPERAR" and saved["confidence"]>=.66 else ("SELECTIVA" if sig!="NO OPERAR" else "ESPERAR")
         st.markdown(f'<div class="signal-card"><div class="muted">DECISIÓN ACTUAL · {market}</div><div class="signal-big">{sig}</div><div class="muted">Calidad: {quality} · horizonte 5 min</div></div>',unsafe_allow_html=True)
