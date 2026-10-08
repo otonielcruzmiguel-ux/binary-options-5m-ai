@@ -1,4 +1,4 @@
-import json
+import json, sqlite3
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import joblib, pandas as pd
@@ -30,7 +30,12 @@ class Handler(BaseHTTPRequestHandler):
             feat=make_features(raw,5,False).dropna(subset=FEATURES)
             p=float(payload["model"].predict_proba(feat[payload["features"]].iloc[[-1]])[0,1])
             th=float(payload.get("threshold",.59))
-            decision="SUBE" if p>=th else ("BAJA" if p<=1-th else "NO OPERAR")
+            decision="NO OPERAR"
+            try:
+                with sqlite3.connect("file:/data/learning.db?mode=ro",uri=True,timeout=2) as con:
+                    rec=con.execute("SELECT decision,updated FROM live_decisions WHERE horizon=5 AND market=?",(market,)).fetchone()
+                if rec and (pd.Timestamp.now(tz="UTC")-pd.Timestamp(rec[1])).total_seconds()<=180: decision=rec[0]
+            except Exception: pass
             body=json.dumps({"market":market,"symbol":symbol,"decision":decision,"confidence":max(p,1-p),"price":float(raw.iloc[-1].close),"calculated_at":pd.Timestamp.now(tz="UTC").isoformat(),"source":"worker-24x7"}).encode()
             self.send_response(200); self.send_header("Content-Type","application/json"); self.send_header("Cache-Control","no-store"); self.end_headers(); self.wfile.write(body)
         except Exception as e:
