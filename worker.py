@@ -26,6 +26,8 @@ def connect():
     c.execute("""CREATE TABLE IF NOT EXISTS evolution(
       period TEXT PRIMARY KEY, created TEXT, evaluated INTEGER, wins INTEGER, losses INTEGER,
       accuracy REAL, change_type TEXT, detail TEXT)""")
+    c.execute("CREATE TABLE IF NOT EXISTS rejected_signals(horizon INTEGER,market TEXT,bucket TEXT,expires TEXT,decision TEXT,reason TEXT,entry REAL,exit REAL,confidence REAL,result TEXT,PRIMARY KEY(horizon,market,bucket))")
+    c.execute("CREATE TABLE IF NOT EXISTS live_decisions(horizon INTEGER,market TEXT,bucket TEXT,decision TEXT,reason TEXT,confidence REAL,updated TEXT,PRIMARY KEY(horizon,market))")
     c.commit(); return c
 
 def directional_quality(row,decision):
@@ -114,6 +116,22 @@ def pair_quarantine(con,market,now,table="signals",min_sample=80):
     expectancy=(wins*PAYOUT-(n-wins))/n
     # Exige al menos equilibrio teórico; el par sigue entrenando aunque quede bloqueado.
     return acc>=BREAK_EVEN,n,acc,expectancy
+
+def record_decision(con,horizon,market,now,decision,reason,confidence,entry,raw):
+    bucket=now.floor(f"{horizon}min"); expires=bucket+pd.Timedelta(minutes=horizon)
+    con.execute("INSERT INTO live_decisions VALUES(?,?,?,?,?,?,?) ON CONFLICT(horizon,market) DO UPDATE SET bucket=excluded.bucket,decision=excluded.decision,reason=excluded.reason,confidence=excluded.confidence,updated=excluded.updated",(horizon,market,bucket.isoformat(),decision,reason,confidence,now.isoformat()))
+    if decision=="NO OPERAR" and reason.startswith("CUARENTENA") and confidence is not None:
+        # Sólo candidatos direccionales descartados por cuarentena; evaluación hipotética.
+        direction=reason.split("|")[-1]
+        con.execute("INSERT OR IGNORE INTO rejected_signals VALUES(?,?,?,?,?,?,?,?,?,?)",(horizon,market,bucket.isoformat(),expires.isoformat(),direction,"CUARENTENA",entry,None,confidence,"PENDIENTE"))
+    for b,e,d,entry0 in con.execute("SELECT bucket,expires,decision,entry FROM rejected_signals WHERE horizon=? AND market=? AND result='PENDIENTE'",(horizon,market)).fetchall():
+        exp=pd.Timestamp(e)
+        if now>=exp:
+            after=raw[raw["timestamp"]>=exp]
+            if not after.empty:
+                exit0=float(after.iloc[0].close)
+                result="EMPATE" if exit0==entry0 else ("GANADA" if (d=="SUBE" and exit0>entry0) or (d=="BAJA" and exit0<entry0) else "PERDIDA")
+                con.execute("UPDATE rejected_signals SET exit=?,result=? WHERE horizon=? AND market=? AND bucket=?",(exit0,result,horizon,market,b))
 
 def hour_quality(con,market,now):
     # Sólo bloquea una franja cuando ya existe muestra forward razonable en esa misma hora UTC.
@@ -231,16 +249,19 @@ async def cycle():
                 if not feat1.empty:
                     row1=feat1.iloc[-1]; p1=float(payload1["model"].predict_proba(feat1[payload1["features"]].iloc[[-1]])[0,1]); th1=float(payload1.get("threshold",THRESHOLD))
                     dec1="SUBE" if p1>=th1 else ("BAJA" if p1<=1-th1 else "NO OPERAR")
+                    candidate_dec1=dec1
+                    reason1="modelo"
                     if dec1!="NO OPERAR":
                         votes1,opp1=directional_quality(row1,dec1)
-                        if votes1<2 or opp1>=2: dec1="NO OPERAR"
+                        if votes1<2 or opp1>=2: dec1="NO OPERAR"; reason1="confluencia"
                     pair1_ok,pair1_n,pair1_acc,pair1_exp=pair_quarantine(con,market,now,"signals_1m",80)
                     if dec1!="NO OPERAR" and not pair1_ok:
-                        dec1="NO OPERAR"
+                        dec1="NO OPERAR"; reason1="CUARENTENA|"+candidate_dec1
                         print(f"CUARENTENA_1M market={market} n={pair1_n} accuracy={pair1_acc:.3f} expectativa={pair1_exp:.3f}",flush=True)
                     base1,quote1=market.split("/")
                     blocked1,_,_=news_block(now,(base1,quote1),before=15,after=30)
-                    if blocked1: dec1="NO OPERAR"
+                    if blocked1: dec1="NO OPERAR"; reason1="noticias"
+                    record_decision(con,1,market,now,dec1,reason1,max(p1,1-p1),float(raw.iloc[-1].close),raw)
                     bucket1=now.floor("1min")
                     if dec1!="NO OPERAR":
                         ctx1=json.loads(context_of(row1)); ctx1["strategy"]="1M"; ctx1=json.dumps(ctx1,separators=(",",":"))
@@ -261,6 +282,7 @@ async def cycle():
             p=float(payload["model"].predict_proba(feat[payload["features"]].iloc[[-1]])[0,1])
             live_threshold,live_n,live_acc=adaptive_threshold(con,market,now)
             decision="SUBE" if p>=live_threshold else ("BAJA" if p<=1-live_threshold else "NO OPERAR")
+            candidate_decision=decision
             gate_reason="modelo"
             if decision!="NO OPERAR":
                 votes,opposite=directional_quality(latest,decision)
@@ -271,13 +293,14 @@ async def cycle():
                 decision="NO OPERAR"; gate_reason=f"horario débil n={hour_n} acc={hour_acc:.3f}"
             pair_ok,pair_n,pair_acc,pair_exp=pair_quarantine(con,market,now,"signals",80)
             if decision!="NO OPERAR" and not pair_ok:
-                decision="NO OPERAR"; gate_reason=f"par en cuarentena n={pair_n} acc={pair_acc:.3f} expectativa={pair_exp:.3f}"
+                decision="NO OPERAR"; gate_reason="CUARENTENA|"+candidate_decision
                 print(f"CUARENTENA_5M market={market} n={pair_n} accuracy={pair_acc:.3f} expectativa={pair_exp:.3f}",flush=True)
             base,quote=market.split("/")
             blocked,news_reason,news_event=news_block(now,(base,quote),before=15,after=30)
             if blocked:
                 decision="NO OPERAR"; gate_reason=news_reason
                 print(f"NO_OPERAR_NOTICIA market={market} motivo={news_reason}",flush=True)
+            record_decision(con,5,market,now,decision,gate_reason,max(p,1-p),float(raw.iloc[-1].close),raw)
             if decision!="NO OPERAR":
                 ctx=json.loads(context_of(latest)); ctx["news_status"]="CLEAR"; ctx["news_source"]="Investing.com"; ctx["quality_gate"]="PASS"; ctx["pair_sample"]=live_n; ctx["pair_accuracy"]=live_acc; ctx["hour_sample"]=hour_n; ctx["hour_accuracy"]=hour_acc; ctx=json.dumps(ctx,separators=(",",":"))
                 con.execute("INSERT OR IGNORE INTO signals(market,bucket,expires,decision,entry,exit,confidence,result,context) VALUES(?,?,?,?,?,?,?,?,?)",(market,bucket.isoformat(),(bucket+pd.Timedelta(minutes=5)).isoformat(),decision,float(raw.iloc[-1].close),None,max(p,1-p),"PENDIENTE",ctx))
