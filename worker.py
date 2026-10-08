@@ -116,9 +116,8 @@ def pair_quarantine(con,market,now,table="signals",min_sample=80):
     n=len(operational); wins=sum(x[0]=="GANADA" for x in operational)
     acc=wins/n if n else None
     expectancy=(wins*PAYOUT-(n-wins))/n if n else None
-    key=f"quarantine_{horizon}"
     con.execute("CREATE TABLE IF NOT EXISTS quarantine_state(horizon INTEGER,market TEXT,blocked INTEGER,changed TEXT,reason TEXT,PRIMARY KEY(horizon,market))")
-    previous=con.execute("SELECT blocked FROM quarantine_state WHERE horizon=? AND market=?",(horizon,market)).fetchone()
+    previous=con.execute("SELECT blocked,changed FROM quarantine_state WHERE horizon=? AND market=?",(horizon,market)).fetchone()
     blocked=bool(previous[0]) if previous else False
     reason="sin muestra suficiente"
     if not blocked and n>=min_sample and acc<BREAK_EVEN:
@@ -126,12 +125,12 @@ def pair_quarantine(con,market,now,table="signals",min_sample=80):
     elif blocked:
         # Muestra exclusivamente posterior al bloqueo: al menos 80 señales rechazadas
         # evaluadas en los últimos 7 días y margen de 2 pp sobre equilibrio.
+        shadow=con.execute("SELECT result FROM rejected_signals WHERE horizon=? AND market=? AND bucket>=? AND result IN ('GANADA','PERDIDA')",(horizon,market,max(since,previous[1] if previous and previous[1] else since))).fetchall()
         sn=len(shadow); sw=sum(x[0]=="GANADA" for x in shadow)
         sa=sw/sn if sn else None
         if sn>=80 and sa>=BREAK_EVEN+.02:
             blocked=False; reason=f"recuperacion sombra n={sn} accuracy={sa:.3f}"
-            # No reutilizar resultados antiguos de sombra para otra recuperación.
-            con.execute("DELETE FROM rejected_signals WHERE horizon=? AND market=?",(horizon,market))
+            # Se conserva el historial de simulaciones para auditoría.
         else:
             reason=f"sombra n={sn} accuracy={sa:.3f}" if sn else "esperando señales sombra"
     if previous is None or blocked!=bool(previous[0]):
