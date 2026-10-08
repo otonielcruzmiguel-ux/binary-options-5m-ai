@@ -258,6 +258,18 @@ def persistent_learning_panel(horizon="5 minutos"):
         cf.update_layout(title="Evolución acumulada (unidades teóricas)",height=340,margin=dict(l=20,r=20,t=55,b=25),xaxis_title=None,yaxis_title="Unidades",hovermode="x unified")
         st.plotly_chart(cf,width="stretch",key="cumulative-results")
 
+    try:
+        import sqlite3
+        with sqlite3.connect("file:/data/learning.db?mode=ro",uri=True,timeout=2) as c:
+            shadow=pd.read_sql_query("SELECT market,bucket,decision,result FROM rejected_signals WHERE horizon=? ORDER BY bucket DESC LIMIT 500",c,params=(1 if horizon=="1 minuto" else 5,))
+        st.markdown("### Señales descartadas por cuarentena · simulación")
+        if shadow.empty: st.caption("Esperando registros nuevos.")
+        else:
+            assessed=shadow[shadow["result"].isin(["GANADA","PERDIDA"])]
+            st.metric("Rechazadas evaluadas",len(assessed))
+            if len(assessed): st.metric("Acierto hipotético",str(round(100*(assessed["result"]=="GANADA").mean(),1))+"%")
+            st.dataframe(shadow.head(30),hide_index=True,width="stretch")
+    except Exception: pass
     export_hist=hist.copy()
     export_summary=pd.DataFrame([{"Evaluadas":len(evaluated),"Ganadas":wins,"Perdidas":losses,"Empates":ties,"Pendientes":pending,"Accuracy":None if np.isnan(accuracy) else accuracy}])
     notes=pd.DataFrame(columns=["Fecha","Par","Señal","Anotación personal","Qué observé","Seguimiento"])
