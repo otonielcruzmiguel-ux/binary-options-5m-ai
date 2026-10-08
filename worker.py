@@ -107,15 +107,37 @@ def adaptive_threshold(con,market,now):
     return min(.68,max(THRESHOLD,THRESHOLD+adj)),n,acc
 
 def pair_quarantine(con,market,now,table="signals",min_sample=80):
-    # Cuarentena basada sólo en resultados forward recientes, no en entrenamiento.
+    # Historial operativo y observaciones en sombra permanecen separados.
+    # Un par bloqueado sólo se rehabilita con evidencia nueva, no por caducidad del historial.
+    horizon=1 if table=="signals_1m" else 5
     since=(now-pd.Timedelta(days=7)).isoformat()
-    rows=con.execute(f"SELECT result FROM {table} WHERE market=? AND bucket>=? AND result IN ('GANADA','PERDIDA')",(market,since)).fetchall()
-    n=len(rows)
-    if n<min_sample: return True,n,None,None
-    wins=sum(r[0]=="GANADA" for r in rows); acc=wins/n
-    expectancy=(wins*PAYOUT-(n-wins))/n
-    # Exige al menos equilibrio teórico; el par sigue entrenando aunque quede bloqueado.
-    return acc>=BREAK_EVEN,n,acc,expectancy
+    operational=con.execute(f"SELECT result FROM {table} WHERE market=? AND bucket>=? AND result IN ('GANADA','PERDIDA')",(market,since)).fetchall()
+    shadow=con.execute("SELECT result FROM rejected_signals WHERE horizon=? AND market=? AND bucket>=? AND result IN ('GANADA','PERDIDA')",(horizon,market,since)).fetchall()
+    n=len(operational); wins=sum(x[0]=="GANADA" for x in operational)
+    acc=wins/n if n else None
+    expectancy=(wins*PAYOUT-(n-wins))/n if n else None
+    key=f"quarantine_{horizon}"
+    con.execute("CREATE TABLE IF NOT EXISTS quarantine_state(horizon INTEGER,market TEXT,blocked INTEGER,changed TEXT,reason TEXT,PRIMARY KEY(horizon,market))")
+    previous=con.execute("SELECT blocked FROM quarantine_state WHERE horizon=? AND market=?",(horizon,market)).fetchone()
+    blocked=bool(previous[0]) if previous else False
+    reason="sin muestra suficiente"
+    if not blocked and n>=min_sample and acc<BREAK_EVEN:
+        blocked=True; reason=f"historial operativo n={n} accuracy={acc:.3f}"
+    elif blocked:
+        # Muestra exclusivamente posterior al bloqueo: al menos 80 señales rechazadas
+        # evaluadas en los últimos 7 días y margen de 2 pp sobre equilibrio.
+        sn=len(shadow); sw=sum(x[0]=="GANADA" for x in shadow)
+        sa=sw/sn if sn else None
+        if sn>=80 and sa>=BREAK_EVEN+.02:
+            blocked=False; reason=f"recuperacion sombra n={sn} accuracy={sa:.3f}"
+            # No reutilizar resultados antiguos de sombra para otra recuperación.
+            con.execute("DELETE FROM rejected_signals WHERE horizon=? AND market=?",(horizon,market))
+        else:
+            reason=f"sombra n={sn} accuracy={sa:.3f}" if sn else "esperando señales sombra"
+    if previous is None or blocked!=bool(previous[0]):
+        con.execute("INSERT INTO quarantine_state VALUES(?,?,?,?,?) ON CONFLICT(horizon,market) DO UPDATE SET blocked=excluded.blocked,changed=excluded.changed,reason=excluded.reason",(horizon,market,int(blocked),now.isoformat(),reason))
+        print(f"ESTADO_CUARENTENA horizon={horizon} market={market} bloqueado={blocked} motivo={reason}",flush=True)
+    return not blocked,n,acc,expectancy
 
 def record_decision(con,horizon,market,now,decision,reason,confidence,entry,raw):
     bucket=now.floor(f"{horizon}min"); expires=bucket+pd.Timedelta(minutes=horizon)
