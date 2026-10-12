@@ -120,7 +120,23 @@ def pair_quarantine(con,market,now,table="signals",min_sample=80):
     previous=con.execute("SELECT blocked,changed FROM quarantine_state WHERE horizon=? AND market=?",(horizon,market)).fetchone()
     blocked=bool(previous[0]) if previous else False
     reason="sin muestra suficiente"
-    if not blocked and n>=min_sample and acc<BREAK_EVEN:
+    # Tras rehabilitarse, no usar la misma muestra histórica para bloquear de nuevo.
+    # Exigir al menos min_sample evaluaciones operativas posteriores a la recuperación.
+    recovered_at = previous[1] if previous and not blocked and str(
+        con.execute("SELECT reason FROM quarantine_state WHERE horizon=? AND market=?",
+                    (horizon,market)).fetchone()[0] or ""
+    ).startswith("recuperacion sombra") else None
+    if recovered_at:
+        fresh = con.execute(f"SELECT result FROM {table} WHERE market=? AND bucket>? AND result IN ('GANADA','PERDIDA')",
+                            (market,recovered_at)).fetchall()
+        fresh_n=len(fresh)
+        fresh_w=sum(r[0]=="GANADA" for r in fresh)
+        if fresh_n>=min_sample and fresh_w/fresh_n<BREAK_EVEN:
+            blocked=True
+            reason=f"historial posterior recuperacion n={fresh_n} accuracy={fresh_w/fresh_n:.3f}"
+        else:
+            reason=f"rehabilitado esperando muestra nueva n={fresh_n}/{min_sample}"
+    elif not blocked and n>=min_sample and acc<BREAK_EVEN:
         blocked=True; reason=f"historial operativo n={n} accuracy={acc:.3f}"
     elif blocked:
         # Muestra exclusivamente posterior al bloqueo: al menos 80 señales rechazadas
